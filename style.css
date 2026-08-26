@@ -35,7 +35,8 @@ body {
   display: flex;
   gap: 8px;
   padding: 12px 32px;
-  overflow-x: auto;
+  flex-wrap: wrap;
+  overflow: visible;
   background: white;
   border-bottom: 1px solid #edf0f2;
 }
@@ -68,7 +69,11 @@ body:not(.is-authenticated) .month-picker,
 body:not(.is-authenticated) .dashboard,
 body:not(.is-authenticated) .settings-panel,
 body:not(.is-authenticated) .income-overview,
-body:not(.is-authenticated) .regions-grid { display: none; }
+body:not(.is-authenticated) .regions-grid { display: none !important; }
+body:not(.is-authenticated) .month-picker,
+body:not(.is-authenticated) .dashboard,
+body:not(.is-authenticated) .settings-panel,
+body:not(.is-authenticated) .income-overview { display: none !important; }
 body:not(.is-authenticated) .login-required { display: block; }
 
 .tab-button {
@@ -230,6 +235,13 @@ body:not(.is-authenticated) .login-required { display: block; }
   cursor: pointer;
 }
 
+@media (max-width: 700px) {
+  .top-tabs { padding: 10px 14px; gap: 6px; }
+  .tab-button, .theme-toggle, .account-button { padding: 8px 10px; font-size: 14px; }
+  .theme-toggle { margin-left: 0; }
+  .account-button { margin-left: auto; }
+}
+
 .cloud-sync-tools {
   display: flex;
   align-items: center;
@@ -331,6 +343,7 @@ body:not(.is-authenticated) .login-required { display: block; }
 
 .auth-login { background: #527d30; }
 .auth-signup { background: #2563eb; }
+.forgot-password { justify-self: start; padding: 4px 0; border: 0; background: transparent; color: #2563eb; font: inherit; cursor: pointer; }
 
 body[data-active-tab] .tab-section {
   display: none;
