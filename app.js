@@ -163,6 +163,7 @@ function renderCloudSync() {
 
 function setAccountButton() {
   const button = document.getElementById("account-button");
+  document.body.classList.toggle("is-authenticated", Boolean(currentUser));
   button.textContent = currentUser ? `已登入：${currentUser.email}` : "登入／注册";
 }
 
@@ -198,6 +199,10 @@ function setupAuth() {
     }
     setAuthMessage("");
     modal.hidden = false;
+  });
+
+  document.getElementById("login-required-button").addEventListener("click", () => {
+    document.getElementById("account-button").click();
   });
 
   document.getElementById("auth-close").addEventListener("click", () => {
