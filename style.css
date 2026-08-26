@@ -40,6 +40,37 @@ body {
   border-bottom: 1px solid #edf0f2;
 }
 
+.login-required {
+  display: none;
+  max-width: 620px;
+  margin: 72px auto;
+  padding: 34px;
+  border: 1px solid #dbe5ef;
+  border-radius: 16px;
+  background: white;
+  text-align: center;
+}
+
+.login-required strong { font-size: 22px; }
+.login-required p { color: #64748b; }
+.login-required button {
+  padding: 10px 16px;
+  border: 0;
+  border-radius: 8px;
+  background: #527d30;
+  color: white;
+  font: inherit;
+  font-weight: bold;
+  cursor: pointer;
+}
+
+body:not(.is-authenticated) .month-picker,
+body:not(.is-authenticated) .dashboard,
+body:not(.is-authenticated) .settings-panel,
+body:not(.is-authenticated) .income-overview,
+body:not(.is-authenticated) .regions-grid { display: none; }
+body:not(.is-authenticated) .login-required { display: block; }
+
 .tab-button {
   display: inline-flex;
   align-items: center;
@@ -2042,6 +2073,11 @@ body.dark-mode .account-button {
   border-color: #3e5430;
   background: #293a20;
   color: #dbeccf;
+}
+
+body.dark-mode .login-required {
+  border-color: #2d3a40;
+  background: #1a2226;
 }
 
 body.dark-mode .cloud-sync-tools {
