@@ -180,6 +180,9 @@ async function refreshAccount() {
   if (currentUser) await loadCloudData();
   setAccountButton();
   renderCloudSync();
+  if (currentUser && new URLSearchParams(window.location.search).get("reset-password") === "true") {
+    document.getElementById("reset-modal").hidden = false;
+  }
 }
 
 function setupAuth() {
@@ -244,6 +247,34 @@ function setupAuth() {
       return;
     }
     setAuthMessage("账号已建立。请到 Email 收件箱确认后，再回来登入。");
+  });
+
+  document.getElementById("forgot-password").addEventListener("click", async () => {
+    const email = emailInput.value.trim();
+    if (!email) {
+      setAuthMessage("请先输入你的 Email。", true);
+      return;
+    }
+    setAuthMessage("正在寄送重设 Email…");
+    const { error } = await supabaseClient.auth.resetPasswordForEmail(email, {
+      redirectTo: "https://edric0419.github.io/asset-manager/?reset-password=true",
+    });
+    if (error) {
+      setAuthMessage(error.message, true);
+      return;
+    }
+    setAuthMessage("重设 Email 已寄出，请到收件箱打开链接。请勿把链接传给任何人。");
+  });
+
+  document.getElementById("save-new-password").addEventListener("click", async () => {
+    const password = document.getElementById("reset-password").value;
+    const message = document.getElementById("reset-message");
+    if (password.length < 6) { message.textContent = "密码至少需要 6 个字。"; return; }
+    const { error } = await supabaseClient.auth.updateUser({ password });
+    if (error) { message.textContent = error.message; return; }
+    document.getElementById("reset-modal").hidden = true;
+    history.replaceState({}, "", window.location.pathname);
+    alert("新密码已储存。请使用新密码登入。");
   });
 }
 
@@ -1249,6 +1280,7 @@ document.getElementById("backup-file").addEventListener("change", (event) => {
 
 function setActiveTab(tab) {
   document.body.dataset.activeTab = tab;
+  try { localStorage.setItem("personal-finance-web-active-tab", tab); } catch {}
   document.querySelectorAll(".tab-button").forEach((button) => {
     const isActive = button.dataset.tab === tab;
     button.classList.toggle("is-active", isActive);
@@ -1275,6 +1307,14 @@ function loadTheme() {
   }
 }
 
+function loadActiveTab() {
+  try {
+    return localStorage.getItem("personal-finance-web-active-tab") || "assets";
+  } catch {
+    return "assets";
+  }
+}
+
 document.querySelectorAll(".tab-button").forEach((button) => {
   button.addEventListener("click", () => setActiveTab(button.dataset.tab));
 });
@@ -1284,7 +1324,7 @@ document.getElementById("theme-toggle").addEventListener("click", () => {
 });
 
 renderAll();
-setActiveTab("assets");
+setActiveTab(loadActiveTab());
 setTheme(loadTheme());
 setupAssetForm("malaysia", regions.malaysia);
 setupAssetForm("taiwan", regions.taiwan);
