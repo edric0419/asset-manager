@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="UTF-8" />
+<link rel="stylesheet" href="style.css" />
+    <title>个人资产与月度收支管理</title>
+  </head>
+
+  <body>
+    <header class="app-header">
+      <p class="app-kicker">PERSONAL FINANCE</p>
+      <h1>个人财务月度管理</h1>
+      <p class="app-subtitle">按月整理 Malaysia（MYR）与 Taiwan（TWD）的资产、负债和收支</p>
+    </header>
+    <nav class="top-tabs" aria-label="主要功能">
+      <button type="button" class="tab-button is-active" data-tab="assets"><span class="nav-icon nav-icon-wallet" aria-hidden="true"></span>资产总览</button>
+      <button type="button" class="tab-button" data-tab="liabilities"><span class="nav-icon nav-icon-card" aria-hidden="true"></span>负债总览</button>
+      <button type="button" class="tab-button" data-tab="income"><span class="nav-icon nav-icon-receipt" aria-hidden="true"></span>损益表</button>
+      <button type="button" class="tab-button" data-tab="settings">⚙ 设置</button>
+      <button type="button" class="theme-toggle" id="theme-toggle" aria-label="切换深色模式">☾ 深色模式</button>
+      <button type="button" class="account-button" id="account-button">登入／注册</button>
+    </nav>
+    <div class="month-picker">
+      <button type="button" class="month-arrow" id="previous-month" aria-label="上一个月">‹</button>
+      <div class="month-menu-wrapper">
+        <button type="button" class="month-toggle" id="month-toggle" aria-expanded="false">
+          <span class="action-icon action-icon-calendar" aria-hidden="true"></span><span id="selected-month-label"></span>
+        </button>
+        <div class="month-panel" id="month-panel" hidden>
+          <div class="year-controls">
+            <button type="button" id="previous-year" aria-label="上一年">⌃</button>
+            <strong id="picker-year"></strong>
+            <button type="button" id="next-year" aria-label="下一年">⌄</button>
+          </div>
+          <div class="month-grid" id="month-grid"></div>
+          <div class="month-panel-footer">
+            <button type="button" id="month-today">● 今天</button>
+            <button type="button" id="month-current">回到本月</button>
+          </div>
+        </div>
+      </div>
+      <button type="button" class="month-arrow" id="next-month" aria-label="下一个月">›</button>
+    </div>
+
+    <section class="dashboard tab-section" data-tab-section="assets">
+      <div class="dashboard-heading">
+        <h2>本月总览（Dashboard）</h2>
+          <button type="button" id="copy-previous-assets" class="copy-previous-assets"><span class="action-icon action-icon-copy" aria-hidden="true"></span>复制上个月资产</button>
+      </div>
+      <p>MYR 和 TWD 分开计算，暂不换算。</p>
+      <section class="savings-goals-card" id="savings-goals-card"></section>
+      <div class="trend-sections">
+        <div class="trend-section">
+          <h3>净资产趋势</h3>
+          <div class="trend-grid" id="net-asset-trend-grid"></div>
+        </div>
+        <div class="trend-section">
+          <h3>资产与负债趋势</h3>
+          <div class="trend-grid" id="asset-liability-trend-grid"></div>
+        </div>
+      </div>
+      <div class="asset-allocation-grid" id="asset-allocation-grid"></div>
+      <div class="dashboard-grid" id="dashboard-grid"></div>
+    </section>
+
+    <section class="settings-panel tab-section" data-tab-section="settings">
+      <h2>设置</h2>
+      <div class="backup-tools">
+        <div>
+          <strong>资料备份</strong>
+          <span>下载备份档，或从备份档还原资料。</span>
+        </div>
+        <div class="backup-actions">
+          <button type="button" id="download-backup">下载备份</button>
+          <button type="button" id="restore-backup">还原备份</button>
+          <input id="backup-file" type="file" accept="application/json,.json" hidden />
+        </div>
+      </div>
+      <div class="cloud-sync-tools" id="cloud-sync-tools" hidden>
+        <div>
+          <strong>线上同步</strong>
+          <span id="cloud-sync-status">准备将这台电脑的本机资料导入线上资料库。</span>
+        </div>
+        <button type="button" id="import-local-data">导入本机资料</button>
+      </div>
+    </section>
+
+    <div class="asset-modal" id="auth-modal" hidden>
+      <div class="asset-modal-dialog auth-dialog" role="dialog" aria-modal="true" aria-label="登入或注册">
+        <div class="auth-dialog-heading">
+          <div>
+            <strong>连接你的资料</strong>
+            <p>登入后，才会开始把资料安全同步到手机和电脑。</p>
+          </div>
+          <button type="button" class="auth-close" id="auth-close" aria-label="关闭">×</button>
+        </div>
+        <label for="auth-email">Email</label>
+        <input id="auth-email" type="email" autocomplete="email" placeholder="你的 Email" />
+        <label for="auth-password">密码</label>
+        <input id="auth-password" type="password" autocomplete="current-password" placeholder="至少 6 个字" />
+        <p class="auth-message" id="auth-message" aria-live="polite"></p>
+        <div class="auth-actions">
+          <button type="button" class="auth-login" id="auth-login">登入</button>
+          <button type="button" class="auth-signup" id="auth-signup">建立账号</button>
+        </div>
+      </div>
+    </div>
+
+    <section class="income-overview tab-section" data-tab-section="income">
+      <h2>损益表</h2>
+      <p>分地区记录收入与开销，自动计算当月结余。</p>
+      <div class="income-highlight-grid" id="income-highlight-grid"></div>
+    </section>
+
+    <main class="regions-grid">
+    <section class="country-section">
+      <h2>Malaysia（MYR）</h2>
+      <p>这里会记录马来西亚的收支、资产和负债。</p>
+      <div class="tab-section" data-tab-section="income">
+      <div class="income-card-heading">
+        <div><h3>马来西亚</h3><p>MYR · RM</p></div>
+        <button type="button" class="open-transaction-form" data-transaction-form-region="malaysia">＋ 新增</button>
+      </div>
+      <div class="income-region-summary" id="malaysia-statement-summary"></div>
+      <div class="transaction-modal" id="malaysia-transaction-modal" hidden>
+      <div class="asset-modal-dialog" role="dialog" aria-modal="true" aria-label="新增马来西亚收支">
+      <div class="transaction-form">
+        <strong>新增马来西亚收支</strong>
+        <select id="malaysia-transaction-type" aria-label="Malaysia 收支类别">
+          <option value="income">收入</option>
+          <option value="expenses">开销</option>
+          <option value="personalExpenses">个人开销</option>
+        </select>
+        <input id="malaysia-transaction-name" type="text" placeholder="项目名称" />
+        <input id="malaysia-transaction-amount" type="number" min="0" placeholder="金额（MYR）" />
+        <button type="button" id="malaysia-add-transaction">新增收支</button>
+        <button type="button" class="close-transaction-form" data-transaction-form-region="malaysia">取消</button>
+      </div>
+      </div>
+      </div>
+      <div id="malaysia-statement"></div>
+      </div>
+
+      <div class="tab-section" data-tab-section="assets">
+      <div class="asset-card-heading">
+        <div><h3>马来西亚</h3><p>MYR · RM</p></div>
+        <button type="button" class="open-asset-form" data-asset-form-region="malaysia">＋ 新增</button>
+      </div>
+      <div class="asset-region-summary" id="malaysia-summary"></div>
+      <div class="asset-modal" id="malaysia-asset-modal" hidden>
+      <div class="asset-modal-dialog" role="dialog" aria-modal="true" aria-label="新增马来西亚资产">
+      <div class="asset-form" id="malaysia-asset-form">
+        <strong>新增马来西亚资产</strong>
+        <select id="malaysia-category" aria-label="Malaysia 资产类别">
+          <option>现金</option><option>银行账户</option><option>电子钱包</option><option>股票</option><option>基金／投资</option><option>定期存款</option>
+        </select>
+        <input id="malaysia-institution" type="text" placeholder="机构／平台，例如 Maybank" />
+        <input id="malaysia-name" type="text" placeholder="账户／资产名称，例如 Saving Account" />
+        <input id="malaysia-amount" type="number" min="0" placeholder="金额（MYR）" />
+        <input id="malaysia-asset-note" type="text" placeholder="备注（可不填）" />
+        <button type="button" id="malaysia-add-asset">新增资产</button>
+        <button type="button" class="close-asset-form" data-asset-form-region="malaysia">取消</button>
+      </div>
+      </div>
+      </div>
+      <div id="malaysia-assets"></div>
+      </div>
+
+      <div class="tab-section" data-tab-section="liabilities">
+      <div class="liability-card-heading">
+        <div><h3>马来西亚</h3><p>MYR · RM</p></div>
+        <button type="button" class="open-liability-form" data-liability-form-region="malaysia">＋ 新增</button>
+      </div>
+      <div class="liability-region-summary" id="malaysia-liability-summary"></div>
+      <div class="liability-modal" id="malaysia-liability-modal" hidden>
+      <div class="asset-modal-dialog" role="dialog" aria-modal="true" aria-label="新增马来西亚负债">
+      <div class="liability-form">
+        <strong>新增马来西亚负债</strong>
+        <input id="malaysia-liability-name" type="text" placeholder="债务名称" />
+        <input id="malaysia-liability-amount" type="number" min="0" placeholder="金额（MYR）" />
+        <button type="button" id="malaysia-add-liability">新增负债</button>
+        <button type="button" class="close-liability-form" data-liability-form-region="malaysia">取消</button>
+      </div>
+      </div>
+      </div>
+      <div id="malaysia-liabilities"></div>
+      </div>
+      <div class="tab-section" data-tab-section="assets">
+      <div class="note-form">
+        <label for="malaysia-note">本月备注</label>
+        <textarea id="malaysia-note" placeholder="例如：本月增加定期存款"></textarea>
+        <button type="button" id="malaysia-save-note">储存备注</button>
+      </div>
+      </div>
+    </section>
+
+    <section class="country-section">
+      <h2>Taiwan（TWD）</h2>
+      <p>这里会记录台湾的收支、资产和负债。</p>
+      <div class="tab-section" data-tab-section="income">
+      <div class="income-card-heading">
+        <div><h3>台湾</h3><p>TWD · NT$</p></div>
+        <button type="button" class="open-transaction-form" data-transaction-form-region="taiwan">＋ 新增</button>
+      </div>
+      <div class="income-region-summary" id="taiwan-statement-summary"></div>
+      <div class="transaction-modal" id="taiwan-transaction-modal" hidden>
+      <div class="asset-modal-dialog" role="dialog" aria-modal="true" aria-label="新增台湾收支">
+      <div class="transaction-form">
+        <strong>新增台湾收支</strong>
+        <select id="taiwan-transaction-type" aria-label="Taiwan 收支类别">
+          <option value="income">收入</option>
+          <option value="expenses">开销</option>
+          <option value="personalExpenses">个人开销</option>
+        </select>
+        <input id="taiwan-transaction-name" type="text" placeholder="项目名称" />
+        <input id="taiwan-transaction-amount" type="number" min="0" placeholder="金额（TWD）" />
+        <button type="button" id="taiwan-add-transaction">新增收支</button>
+        <button type="button" class="close-transaction-form" data-transaction-form-region="taiwan">取消</button>
+      </div>
+      </div>
+      </div>
+      <div id="taiwan-statement"></div>
+      </div>
+
+      <div class="tab-section" data-tab-section="assets">
+      <div class="asset-card-heading">
+        <div><h3>台湾</h3><p>TWD · NT$</p></div>
+        <button type="button" class="open-asset-form" data-asset-form-region="taiwan">＋ 新增</button>
+      </div>
+      <div class="asset-region-summary" id="taiwan-summary"></div>
+      <div class="asset-modal" id="taiwan-asset-modal" hidden>
+      <div class="asset-modal-dialog" role="dialog" aria-modal="true" aria-label="新增台湾资产">
+      <div class="asset-form" id="taiwan-asset-form">
+        <strong>新增台湾资产</strong>
+        <select id="taiwan-category" aria-label="Taiwan 资产类别">
+          <option>现金</option><option>银行账户</option><option>电子钱包</option><option>股票</option><option>基金／投资</option><option>定期存款</option>
+        </select>
+        <input id="taiwan-institution" type="text" placeholder="机构／平台，例如 玉山银行" />
+        <input id="taiwan-name" type="text" placeholder="账户／资产名称，例如 Saving Account" />
+        <input id="taiwan-amount" type="number" min="0" placeholder="金额（TWD）" />
+        <input id="taiwan-asset-note" type="text" placeholder="备注（可不填）" />
+        <button type="button" id="taiwan-add-asset">新增资产</button>
+        <button type="button" class="close-asset-form" data-asset-form-region="taiwan">取消</button>
+      </div>
+      </div>
+      </div>
+      <div id="taiwan-assets"></div>
+      </div>
+
+      <div class="tab-section" data-tab-section="liabilities">
+      <div class="liability-card-heading">
+        <div><h3>台湾</h3><p>TWD · NT$</p></div>
+        <button type="button" class="open-liability-form" data-liability-form-region="taiwan">＋ 新增</button>
+      </div>
+      <div class="liability-region-summary" id="taiwan-liability-summary"></div>
+      <div class="liability-modal" id="taiwan-liability-modal" hidden>
+      <div class="asset-modal-dialog" role="dialog" aria-modal="true" aria-label="新增台湾负债">
+      <div class="liability-form">
+        <strong>新增台湾负债</strong>
+        <input id="taiwan-liability-name" type="text" placeholder="债务名称" />
+        <input id="taiwan-liability-amount" type="number" min="0" placeholder="金额（TWD）" />
+        <button type="button" id="taiwan-add-liability">新增负债</button>
+        <button type="button" class="close-liability-form" data-liability-form-region="taiwan">取消</button>
+      </div>
+      </div>
+      </div>
+      <div id="taiwan-liabilities"></div>
+      </div>
+      <div class="tab-section" data-tab-section="assets">
+      <div class="note-form">
+        <label for="taiwan-note">本月备注</label>
+        <textarea id="taiwan-note" placeholder="例如：本月增加定期存款"></textarea>
+        <button type="button" id="taiwan-save-note">储存备注</button>
+      </div>
+      </div>
+    </section>
+    <section class="managed-amount-section tab-section" data-tab-section="assets">
+      <p>代管理金额</p>
+      <div class="managed-amount-grid" id="managed-amount-grid"></div>
+    </section>
+    </main>
+
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="supabase-config.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>
+
