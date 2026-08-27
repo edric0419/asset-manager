@@ -686,7 +686,7 @@ body[data-active-tab="settings"] .regions-grid {
 
 .dashboard-metrics {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
 }
 
@@ -1309,6 +1309,25 @@ body[data-active-tab="settings"] .regions-grid {
   overflow: visible;
 }
 
+.chart-wrapper {
+  position: relative;
+}
+
+.chart-tooltip {
+  position: absolute;
+  z-index: 2;
+  transform: translate(-50%, -100%);
+  padding: 7px 10px;
+  border-radius: 8px;
+  background: #172033;
+  color: white;
+  font-size: 12px;
+  font-weight: bold;
+  white-space: nowrap;
+  pointer-events: none;
+  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.22);
+}
+
 .chart-grid-line,
 .chart-axis-line {
   stroke: #dbe3eb;
@@ -1335,7 +1354,18 @@ body[data-active-tab="settings"] .regions-grid {
 }
 
 .chart-point {
-  display: none;
+  display: block;
+  stroke: white;
+  stroke-width: 2;
+  cursor: pointer;
+  transition: r 0.15s ease, stroke-width 0.15s ease;
+}
+
+.chart-point:hover,
+.chart-point:focus {
+  r: 6;
+  stroke-width: 3;
+  outline: none;
 }
 
 .net-asset-series {
@@ -2003,6 +2033,17 @@ body[data-active-tab="assets"] .country-section:has(#taiwan-summary) {
   .single-trend-heading {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .trend-region-buttons {
+    box-sizing: border-box;
+    width: 100%;
+  }
+
+  .trend-region-buttons button {
+    min-width: 0;
+    flex: 1;
+    text-align: center;
   }
 
   .dashboard-heading {

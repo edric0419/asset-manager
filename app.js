@@ -661,10 +661,6 @@ function renderDashboard() {
               <p>净资产</p>
               <strong>${money(region.currency, netAssets)}</strong>
             </article>
-            <article class="metric-card">
-              <p>资产笔数</p>
-              <strong>${region.assets.length} 笔</strong>
-            </article>
           </div>
         </section>
       `;
@@ -896,21 +892,50 @@ function createLineChart(months, series, currency, summary) {
   const lines = series
     .map(
       (item) =>
-        `<path d="${smoothPath(item.values)}" class="chart-line ${item.className}" /><g>${item.values.map((value, index) => `<circle cx="${x(index)}" cy="${y(value)}" r="4" class="chart-point ${item.className}" data-tooltip="${item.name}：${money(currency, value)}" tabindex="0"></circle>`).join("")}</g>`
+        `<path d="${smoothPath(item.values)}" class="chart-line ${item.className}" /><g>${item.values.map((value, index) => `<circle cx="${x(index)}" cy="${y(value)}" r="4" class="chart-point ${item.className}" data-tooltip="${item.name}：${money(currency, value)}" tabindex="0"><title>${item.name}：${money(currency, value)}</title></circle>`).join("")}</g>`
     )
     .join("");
   const legend = series.map((item) => `<span class="chart-legend-item"><i class="chart-swatch ${item.className}"></i>${item.name}</span>`).join("");
 
   return `
-    <div class="chart-legend">${legend}</div>
-    <svg class="line-chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="${summary}">
-      <title>${summary}</title>
-      ${grid}
-      <line x1="${left}" x2="${width - right}" y1="${height - bottom}" y2="${height - bottom}" class="chart-axis-line" />
-      ${xLabels}
-      ${lines}
-    </svg>
+    <div class="chart-wrapper">
+      <div class="chart-legend">${legend}</div>
+      <div class="chart-tooltip" role="status" hidden></div>
+      <svg class="line-chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="${summary}">
+        <title>${summary}</title>
+        ${grid}
+        <line x1="${left}" x2="${width - right}" y1="${height - bottom}" y2="${height - bottom}" class="chart-axis-line" />
+        ${xLabels}
+        ${lines}
+      </svg>
+    </div>
   `;
+}
+
+function bindChartTooltips(container) {
+  const wrapper = container.querySelector(".chart-wrapper");
+  const tooltip = container.querySelector(".chart-tooltip");
+  if (!wrapper || !tooltip) return;
+
+  const showTooltip = (point) => {
+    const wrapperRect = wrapper.getBoundingClientRect();
+    const pointRect = point.getBoundingClientRect();
+    tooltip.textContent = point.dataset.tooltip;
+    tooltip.style.left = `${pointRect.left - wrapperRect.left + pointRect.width / 2}px`;
+    tooltip.style.top = `${pointRect.top - wrapperRect.top - 8}px`;
+    tooltip.hidden = false;
+  };
+  const hideTooltip = () => { tooltip.hidden = true; };
+
+  container.querySelectorAll(".chart-point").forEach((point) => {
+    point.addEventListener("pointerenter", () => showTooltip(point));
+    point.addEventListener("focus", () => showTooltip(point));
+    point.addEventListener("click", () => showTooltip(point));
+    point.addEventListener("pointerleave", (event) => {
+      if (event.pointerType !== "touch") hideTooltip();
+    });
+    point.addEventListener("blur", hideTooltip);
+  });
 }
 
 function renderNetAssetTrend() {
@@ -921,6 +946,7 @@ function renderNetAssetTrend() {
     return total(region.assets) - total(region.liabilities) - managedAmount(region);
   });
   trendGrid.innerHTML = renderSingleTrendCard(months, "净资产趋势", [{ name: "净资产", values, className: "net-asset-series" }]);
+  bindChartTooltips(trendGrid);
 }
 
 function renderAssetLiabilityTrend() {
@@ -933,6 +959,7 @@ function renderAssetLiabilityTrend() {
     { name: "总负债", values: liabilityValues, className: "liability-series" },
   ];
   trendGrid.innerHTML = renderSingleTrendCard(months, "资产与负债趋势", series);
+  bindChartTooltips(trendGrid);
 }
 
 function renderRegion(id, region) {
