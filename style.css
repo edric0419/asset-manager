@@ -343,7 +343,6 @@ body:not(.is-authenticated) .login-required { display: block; }
 
 .auth-login { background: #527d30; }
 .auth-signup { background: #2563eb; }
-.forgot-password { justify-self: start; padding: 4px 0; border: 0; background: transparent; color: #2563eb; font: inherit; cursor: pointer; }
 
 body[data-active-tab] .tab-section {
   display: none;
