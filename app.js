@@ -227,7 +227,7 @@ function setupAuth() {
     setAccountButton();
     renderCloudSync();
     modal.hidden = true;
-    alert("登入成功。下一步会安全导入你现在的本机资料。");
+    alert("登入成功。线上资料已载入。");
   });
 
   document.getElementById("auth-signup").addEventListener("click", async () => {
