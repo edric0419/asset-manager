@@ -1,34 +1,3 @@
-const defaultRegions = {
-  malaysia: {
-    currency: "RM",
-    income: [{ name: "Salary", amount: 3500 }],
-    expenses: [{ name: "房租", amount: 900 }],
-    personalExpenses: [{ name: "餐饮", amount: 450 }],
-    assets: [
-      { category: "现金", name: "现金", amount: 800 },
-      { category: "银行账户", name: "Maybank Saving Account", amount: 8000 },
-      { category: "电子钱包", name: "TNG eWallet", amount: 1200 },
-      { category: "基金／投资", name: "FSMOne Fund", amount: 3000 },
-    ],
-    liabilities: [{ name: "信用卡账单", amount: 500 }],
-    managedAmount: 0,
-  },
-  taiwan: {
-    currency: "NT$",
-    income: [{ name: "Salary", amount: 65000 }],
-    expenses: [{ name: "房租", amount: 18000 }],
-    personalExpenses: [{ name: "餐饮", amount: 7000 }],
-    assets: [
-      { category: "现金", name: "现金", amount: 5000 },
-      { category: "银行账户", name: "华南银行 Saving Account", amount: 120000 },
-      { category: "定期存款", name: "玉山银行 Fixed Deposit", amount: 80000 },
-      { category: "股票", name: "台湾股票", amount: 40000 },
-    ],
-    liabilities: [{ name: "学贷", amount: 30000 }],
-    managedAmount: 0,
-  },
-};
-
 const storageKey = "personal-finance-web-regions-v1";
 const defaultSavingsGoals = { taiwan: 0, malaysia: 0 };
 const supabaseClient = window.supabase?.createClient(
@@ -36,13 +5,27 @@ const supabaseClient = window.supabase?.createClient(
   window.SUPABASE_CONFIG?.publishableKey
 );
 let currentUser = null;
+let toastTimer;
+
+function showToast(message) {
+  const toast = document.getElementById("app-toast");
+  toast.textContent = message;
+  toast.hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => {
+    toast.hidden = true;
+  }, 3000);
+}
 let cloudSyncTimer;
 let automaticSync = false;
+let cloudSyncInProgress = false;
+let pendingSignOut = false;
 
 function queueCloudSync() {
-  if (!currentUser || !localStorage.getItem(`personal-finance-cloud-imported-${currentUser.id}`)) return;
+  if (pendingSignOut || !currentUser || !localStorage.getItem(`personal-finance-cloud-imported-${currentUser.id}`)) return;
   clearTimeout(cloudSyncTimer);
   cloudSyncTimer = setTimeout(() => {
+    if (pendingSignOut || !currentUser || cloudSyncInProgress) return;
     automaticSync = true;
     document.getElementById("import-local-data").click();
   }, 1200);
@@ -67,7 +50,7 @@ function makeDatabaseIds() {
   saveRegions();
 }
 
-function getCloudRecords() {
+function getCloudRecords(userId) {
   const typeMap = {
     assets: "asset",
     income: "income",
@@ -83,7 +66,7 @@ function getCloudRecords() {
         region[collection].forEach((item) => {
           records.push({
             id: item.id,
-            user_id: currentUser.id,
+            user_id: userId,
             month_key: monthKey,
             country,
             record_type: recordType,
@@ -103,10 +86,11 @@ function getCloudRecords() {
 
 async function loadCloudData() {
   if (!currentUser) return;
+  const userId = currentUser.id;
   const [recordsResult, settingsResult, goalsResult] = await Promise.all([
-    supabaseClient.from("finance_records").select("*").eq("user_id", currentUser.id),
-    supabaseClient.from("monthly_settings").select("*").eq("user_id", currentUser.id),
-    supabaseClient.from("savings_goals").select("*").eq("user_id", currentUser.id),
+    supabaseClient.from("finance_records").select("*").eq("user_id", userId),
+    supabaseClient.from("monthly_settings").select("*").eq("user_id", userId),
+    supabaseClient.from("savings_goals").select("*").eq("user_id", userId),
   ]);
   const error = recordsResult.error || settingsResult.error || goalsResult.error;
   if (error) return;
@@ -139,7 +123,7 @@ async function loadCloudData() {
   goals.forEach((goal) => { financeData.savingsGoals[goal.country] = Number(goal.target_amount || 0); });
   if (!financeData.months[selectedMonth]) selectedMonth = Object.keys(financeData.months).sort().at(-1);
   financeData.selectedMonth = selectedMonth;
-  localStorage.setItem(`personal-finance-cloud-imported-${currentUser.id}`, "true");
+  localStorage.setItem(`personal-finance-cloud-imported-${userId}`, "true");
   saveRegions();
   renderAll();
 }
@@ -173,6 +157,22 @@ function setAuthMessage(message, isError = false) {
   messageBox.style.color = isError ? "#dc2626" : "#527d30";
 }
 
+async function finishSignOut() {
+  pendingSignOut = false;
+  if (!currentUser) return;
+  clearTimeout(cloudSyncTimer);
+  automaticSync = false;
+  const { error } = await supabaseClient.auth.signOut();
+  if (error) {
+    showToast("登出失败，请稍后再试。");
+    return;
+  }
+  currentUser = null;
+  setAccountButton();
+  renderCloudSync();
+  showToast("已安全登出。");
+}
+
 async function refreshAccount() {
   if (!supabaseClient) return;
   const { data } = await supabaseClient.auth.getUser();
@@ -187,14 +187,16 @@ function setupAuth() {
   const emailInput = document.getElementById("auth-email");
   const passwordInput = document.getElementById("auth-password");
 
-  document.getElementById("account-button").addEventListener("click", () => {
+  document.getElementById("account-button").addEventListener("click", async () => {
     if (currentUser) {
-      supabaseClient.auth.signOut().then(() => {
-        currentUser = null;
-        setAccountButton();
-        renderCloudSync();
-        alert("已登出。你的本机资料没有被删除。");
-      });
+      clearTimeout(cloudSyncTimer);
+      automaticSync = false;
+      if (cloudSyncInProgress) {
+        pendingSignOut = true;
+        showToast("正在完成同步，完成后会自动登出。");
+        return;
+      }
+      await finishSignOut();
       return;
     }
     setAuthMessage("");
@@ -207,6 +209,12 @@ function setupAuth() {
 
   document.getElementById("auth-close").addEventListener("click", () => {
     modal.hidden = true;
+  });
+
+  passwordInput.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter") return;
+    event.preventDefault();
+    document.getElementById("auth-login").click();
   });
 
   document.getElementById("auth-login").addEventListener("click", async () => {
@@ -225,9 +233,10 @@ function setupAuth() {
     currentUser = data.user;
     setAccountButton();
     modal.hidden = true;
-    alert("登入成功。正在载入线上资料。");
+    showToast("登入成功。正在载入线上资料…");
     await loadCloudData();
     renderCloudSync();
+    showToast("线上资料已载入。");
   });
 
   document.getElementById("auth-signup").addEventListener("click", async () => {
@@ -254,6 +263,9 @@ function setupCloudImport() {
       alert("请先登入。");
       return;
     }
+    if (cloudSyncInProgress) return;
+    const userId = currentUser.id;
+    cloudSyncInProgress = true;
     const button = document.getElementById("import-local-data");
     const status = document.getElementById("cloud-sync-status");
     const isAutomatic = automaticSync;
@@ -262,10 +274,10 @@ function setupCloudImport() {
     status.textContent = isAutomatic ? "正在自动同步…" : "正在安全同步资料…";
     try {
       makeDatabaseIds();
-      const records = getCloudRecords();
+      const records = getCloudRecords(userId);
       const monthlySettings = Object.entries(financeData.months).flatMap(([monthKey, monthRegions]) =>
         ["taiwan", "malaysia"].map((country) => ({
-          user_id: currentUser.id,
+          user_id: userId,
           month_key: monthKey,
           country,
           managed_amount: Number(monthRegions[country].managedAmount || 0),
@@ -273,7 +285,7 @@ function setupCloudImport() {
         }))
       );
       const savingsGoals = ["taiwan", "malaysia"].map((country) => ({
-        user_id: currentUser.id,
+        user_id: userId,
         country,
         target_amount: Number(financeData.savingsGoals[country] || 0),
       }));
@@ -285,7 +297,7 @@ function setupCloudImport() {
       const { data: cloudRecords, error: cloudRecordsError } = await supabaseClient
         .from("finance_records")
         .select("id")
-        .eq("user_id", currentUser.id);
+        .eq("user_id", userId);
       if (cloudRecordsError) throw cloudRecordsError;
       const localIds = new Set(records.map((record) => record.id));
       const removedIds = (cloudRecords || []).map((record) => record.id).filter((id) => !localIds.has(id));
@@ -293,7 +305,7 @@ function setupCloudImport() {
         const { error: deleteError } = await supabaseClient
           .from("finance_records")
           .delete()
-          .eq("user_id", currentUser.id)
+          .eq("user_id", userId)
           .in("id", removedIds);
         if (deleteError) throw deleteError;
       }
@@ -302,13 +314,13 @@ function setupCloudImport() {
         const { data: existingSettings, error: findError } = await supabaseClient
           .from("monthly_settings")
           .select("id")
-          .eq("user_id", currentUser.id)
+          .eq("user_id", userId)
           .eq("month_key", setting.month_key)
           .eq("country", setting.country)
           .limit(1);
         if (findError) throw findError;
         const settingsResult = existingSettings.length
-          ? await supabaseClient.from("monthly_settings").update(setting).eq("id", existingSettings[0].id).eq("user_id", currentUser.id)
+          ? await supabaseClient.from("monthly_settings").update(setting).eq("id", existingSettings[0].id).eq("user_id", userId)
           : await supabaseClient.from("monthly_settings").insert(setting);
         if (settingsResult.error) throw settingsResult.error;
       }
@@ -317,27 +329,30 @@ function setupCloudImport() {
         const { data: existingGoals, error: findError } = await supabaseClient
           .from("savings_goals")
           .select("id")
-          .eq("user_id", currentUser.id)
+          .eq("user_id", userId)
           .eq("country", goal.country)
           .limit(1);
         if (findError) throw findError;
         const goalsResult = existingGoals.length
-          ? await supabaseClient.from("savings_goals").update(goal).eq("id", existingGoals[0].id).eq("user_id", currentUser.id)
+          ? await supabaseClient.from("savings_goals").update(goal).eq("id", existingGoals[0].id).eq("user_id", userId)
           : await supabaseClient.from("savings_goals").insert(goal);
         if (goalsResult.error) throw goalsResult.error;
       }
-      localStorage.setItem(`personal-finance-cloud-imported-${currentUser.id}`, "true");
+      localStorage.setItem(`personal-finance-cloud-imported-${userId}`, "true");
       renderCloudSync();
       if (isAutomatic) {
         const syncedAt = new Date().toLocaleTimeString("zh-TW", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
         status.textContent = `已自动同步到线上 · ${syncedAt}`;
       }
       else alert(`同步完成：${records.length} 笔资料已安全保存到线上。`);
-      button.disabled = false;
     } catch (error) {
       status.textContent = "导入未完成，本机资料仍保留。";
+      if (pendingSignOut) showToast("同步未完成，已保留本机资料。正在登出。");
+      else alert(`导入失败：${error.message || "请检查网络后再试。"}`);
+    } finally {
+      cloudSyncInProgress = false;
       button.disabled = false;
-      alert(`导入失败：${error.message || "请检查网络后再试。"}`);
+      if (pendingSignOut) await finishSignOut();
     }
   });
 }
@@ -381,11 +396,21 @@ function createEmptyRegions() {
   };
 }
 
+function createInitialFinanceData() {
+  const today = new Date();
+  const currentMonth = monthKey(today.getFullYear(), today.getMonth() + 1);
+  return {
+    selectedMonth: currentMonth,
+    months: { [currentMonth]: createEmptyRegions() },
+    savingsGoals: { ...defaultSavingsGoals },
+  };
+}
+
 function loadFinanceData() {
   try {
     const savedData = localStorage.getItem(storageKey);
     if (!savedData) {
-      return { selectedMonth: "2026-08", months: { "2026-08": defaultRegions }, savingsGoals: { ...defaultSavingsGoals } };
+      return createInitialFinanceData();
     }
 
     const parsedData = JSON.parse(savedData);
@@ -395,7 +420,7 @@ function loadFinanceData() {
 
     return { selectedMonth: "2026-08", months: { "2026-08": parsedData }, savingsGoals: { ...defaultSavingsGoals } };
   } catch {
-    return { selectedMonth: "2026-08", months: { "2026-08": defaultRegions }, savingsGoals: { ...defaultSavingsGoals } };
+    return createInitialFinanceData();
   }
 }
 

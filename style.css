@@ -2409,4 +2409,26 @@ body.dark-mode .chart-axis-line {
 body.dark-mode .chart-axis-text {
   fill: #9eabb5;
 }
+.app-toast {
+  position: fixed;
+  top: 18px;
+  left: 50%;
+  z-index: 1000;
+  transform: translateX(-50%);
+  padding: 12px 18px;
+  border: 1px solid #b8d5a5;
+  border-radius: 12px;
+  background: #f1f8ec;
+  color: #315d22;
+  box-shadow: 0 10px 30px rgb(15 23 42 / 18%);
+  font-weight: 700;
+}
+
+.app-toast[hidden] { display: none; }
+
+body.dark-mode .app-toast {
+  border-color: #45643a;
+  background: #1d2b20;
+  color: #b9e59f;
+}
 
