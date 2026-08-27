@@ -32,6 +32,9 @@ body {
 }
 
 .top-tabs {
+  position: sticky;
+  top: 0;
+  z-index: 100;
   display: flex;
   gap: 8px;
   padding: 12px 32px;
@@ -39,6 +42,7 @@ body {
   overflow: visible;
   background: white;
   border-bottom: 1px solid #edf0f2;
+  box-shadow: 0 5px 14px rgba(15, 23, 42, 0.08);
 }
 
 .login-required {
