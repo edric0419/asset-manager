@@ -223,11 +223,11 @@ function setupAuth() {
       return;
     }
     currentUser = data.user;
-    await loadCloudData();
     setAccountButton();
-    renderCloudSync();
     modal.hidden = true;
-    alert("登入成功。线上资料已载入。");
+    alert("登入成功。正在载入线上资料。");
+    await loadCloudData();
+    renderCloudSync();
   });
 
   document.getElementById("auth-signup").addEventListener("click", async () => {
