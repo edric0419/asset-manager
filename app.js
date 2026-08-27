@@ -1130,6 +1130,7 @@ function bindEditButtons(id, region) {
         return;
       }
       const row = button.closest(".asset-row, .liability-row, .transaction-row");
+      row.classList.add("is-editing");
       row.innerHTML = `
         <input class="inline-name-input" type="text" aria-label="修改名称" />
         <input class="inline-amount-input" type="number" min="0" aria-label="修改金额" />

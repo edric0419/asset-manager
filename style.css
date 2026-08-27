@@ -2045,6 +2045,38 @@ body[data-active-tab="assets"] .country-section:has(#taiwan-summary) {
   }
 }
 
+@media (max-width: 600px) {
+  .asset-row.is-editing,
+  .liability-row.is-editing,
+  .transaction-row.is-editing {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    align-items: stretch;
+    width: 100%;
+    box-sizing: border-box;
+  }
+
+  .is-editing .inline-name-input,
+  .is-editing .inline-amount-input {
+    width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
+  }
+
+  .is-editing .row-actions {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    width: 100%;
+  }
+
+  .is-editing .row-actions button {
+    width: 100%;
+    min-width: 0;
+    padding-right: 6px;
+    padding-left: 6px;
+  }
+}
+
 @media (max-width: 480px) {
   .dashboard-metrics {
     grid-template-columns: 1fr;
