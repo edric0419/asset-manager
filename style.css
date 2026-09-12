@@ -2509,3 +2509,62 @@ body.dark-mode .app-toast {
   color: #b9e59f;
 }
 
+
+
+/* 自有／代管资产：仅用于功能分支 */
+.asset-row.is-managed {
+  border-style: dashed;
+  border-color: #6d9671;
+  background: #f7fbf7;
+}
+.asset-row.is-managed .asset-name::after {
+  content: "代管";
+  display: inline-block;
+  margin-left: 8px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: #e7f3e4;
+  color: #47873b;
+  font-size: 0.78em;
+  font-weight: 700;
+}
+.inline-ownership-select {
+  min-width: 124px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+}
+.asset-row.is-editing.asset-editing {
+  grid-template-columns: minmax(0, 1fr) 140px 132px;
+  align-items: end;
+}
+.asset-row.is-editing.asset-editing .inline-name-input {
+  grid-column: 1 / -1;
+}
+.asset-row.is-editing.asset-editing .inline-edit-actions {
+  grid-column: 1 / -1;
+  justify-content: flex-start;
+}
+body.dark-mode .asset-row.is-managed {
+  border-color: #4f7158;
+  background: #1c2a23;
+}
+body.dark-mode .asset-row.is-managed .asset-name::after {
+  background: #294334;
+  color: #a8d39b;
+}
+@media (max-width: 600px) {
+  .asset-row.is-editing.asset-editing {
+    grid-template-columns: 1fr 1fr;
+  }
+  .asset-row.is-editing.asset-editing .inline-name-input,
+  .asset-row.is-editing.asset-editing .inline-edit-actions {
+    grid-column: 1 / -1;
+  }
+  .asset-row.is-editing.asset-editing .inline-ownership-select {
+    width: 100%;
+  }
+}

@@ -43,6 +43,7 @@ function makeDatabaseIds() {
       collections.forEach((collection) => {
         region[collection].forEach((item) => {
           if (!isUuid(item.id)) item.id = globalThis.crypto.randomUUID();
+          if (collection === "assets" && !["owned", "managed"].includes(item.ownership)) item.ownership = "owned";
         });
       });
     });
@@ -72,6 +73,7 @@ function getCloudRecords(userId) {
             record_type: recordType,
             category: recordType === "asset" ? item.category || null : null,
             institution: recordType === "asset" ? item.institution || null : null,
+            ownership: recordType === "asset" ? item.ownership || "owned" : "owned",
             name: item.name,
             currency: region.currency,
             amount: Number(item.amount),
@@ -110,6 +112,7 @@ async function loadCloudData() {
     region.currency = record.currency;
     region[collectionMap[record.record_type]].push({
       id: record.id, category: record.category || undefined, institution: record.institution || undefined,
+      ownership: record.record_type === "asset" ? record.ownership || "owned" : undefined,
       name: record.name, amount: Number(record.amount), note: record.note || undefined,
     });
   });
@@ -463,7 +466,7 @@ function isBackupData(data) {
         return `${month} 的${id === "taiwan" ? "台湾" : "马来西亚"}资料格式不完整。`;
       }
       const validAmount = (item) => item && typeof item.name === "string" && Number.isFinite(item.amount) && item.amount >= 0;
-      if (!region.assets.every((item) => validAmount(item) && typeof item.category === "string") || !region.income.every(validAmount) || !region.expenses.every(validAmount) || !region.personalExpenses.every(validAmount) || !region.liabilities.every(validAmount) || !Number.isFinite(Number(region.managedAmount || 0))) {
+      if (!region.assets.every((item) => validAmount(item) && typeof item.category === "string" && (!item.ownership || ["owned", "managed"].includes(item.ownership))) || !region.income.every(validAmount) || !region.expenses.every(validAmount) || !region.personalExpenses.every(validAmount) || !region.liabilities.every(validAmount) || !Number.isFinite(Number(region.managedAmount || 0))) {
         return `${month} 的${id === "taiwan" ? "台湾" : "马来西亚"}资料包含无效金额或栏位。`;
       }
     }
@@ -628,8 +631,20 @@ function total(items) {
   return items.reduce((sum, item) => sum + item.amount, 0);
 }
 
-function managedAmount(region) {
-  return Number(region.managedAmount) || 0;
+function isManagedAsset(asset) {
+  return asset.ownership === "managed";
+}
+
+function ownedAssets(region) {
+  return region.assets.filter((asset) => !isManagedAsset(asset));
+}
+
+function managedAssets(region) {
+  return region.assets.filter(isManagedAsset);
+}
+
+function totalOwnedAssets(region) {
+  return total(ownedAssets(region));
 }
 
 function money(currency, amount) {
@@ -641,9 +656,9 @@ function renderDashboard() {
   dashboard.innerHTML = ["taiwan", "malaysia"]
     .map((id) => {
       const region = regions[id];
-      const totalAssets = total(region.assets);
+      const totalAssets = totalOwnedAssets(region);
       const totalLiabilities = total(region.liabilities);
-      const netAssets = totalAssets - totalLiabilities - managedAmount(region);
+      const netAssets = totalAssets - totalLiabilities;
       const regionTitle = id === "taiwan" ? "Taiwan（TWD）" : "Malaysia（MYR）";
       return `
         <section class="dashboard-region">
@@ -675,8 +690,8 @@ function renderAssetAllocation() {
   allocationGrid.innerHTML = ["taiwan", "malaysia"]
     .map((id) => {
       const region = regions[id];
-      const totalAssets = total(region.assets);
-      const categories = region.assets.reduce((groups, asset) => {
+      const totalAssets = totalOwnedAssets(region);
+      const categories = ownedAssets(region).reduce((groups, asset) => {
         const category = asset.category || "其他资产";
         groups[category] = (groups[category] || 0) + asset.amount;
         return groups;
@@ -708,7 +723,7 @@ function renderSavingsGoals() {
     <div class="savings-goals-regions">${regionsOrder.map((id) => {
       const region = regions[id];
       const goal = Number(financeData.savingsGoals[id]) || 0;
-      const current = total(region.assets) - total(region.liabilities) - managedAmount(region);
+      const current = totalOwnedAssets(region) - total(region.liabilities);
       const progress = goal > 0 ? Math.min(100, Math.max(0, (current / goal) * 100)) : 0;
       const remaining = goal - current;
       return `<article class="savings-goal-region">
@@ -736,45 +751,6 @@ function renderSavingsGoals() {
           return;
         }
         financeData.savingsGoals[id] = amount;
-        saveRegions();
-        renderAll();
-      });
-    });
-  });
-}
-
-function renderManagedAmountCards() {
-  const cardGrid = document.getElementById("managed-amount-grid");
-  const labels = { taiwan: "台湾", malaysia: "马来西亚" };
-
-  cardGrid.innerHTML = ["taiwan", "malaysia"]
-    .map((id) => {
-      const region = regions[id];
-      return `<article class="managed-amount-card" data-managed-card="${id}">
-        <div class="managed-card-heading"><strong><i class="managed-icon" aria-hidden="true"></i>${labels[id]} 代管理</strong><button type="button" class="managed-edit-button" data-managed-edit="${id}"><i aria-hidden="true"></i>编辑</button></div>
-        <b>${money(region.currency, managedAmount(region))}</b>
-        <span>代管理金额从净资产中扣除</span>
-      </article>`;
-    })
-    .join("");
-
-  document.querySelectorAll("[data-managed-edit]").forEach((button) => {
-    button.addEventListener("click", () => {
-      const id = button.dataset.managedEdit;
-      const region = regions[id];
-      const card = button.closest(".managed-amount-card");
-      card.innerHTML = `<div class="managed-card-heading"><strong><i class="managed-icon" aria-hidden="true"></i>${labels[id]} 代管理</strong></div>
-        <div class="managed-edit-form"><span>${region.currency}</span><input type="number" min="0" step="0.01" aria-label="代管理金额" value="${managedAmount(region)}"><button type="button" class="managed-save-button">储存</button><button type="button" class="managed-cancel-button">取消</button></div>
-        <span>代管理金额从净资产中扣除</span>`;
-
-      card.querySelector(".managed-cancel-button").addEventListener("click", renderManagedAmountCards);
-      card.querySelector(".managed-save-button").addEventListener("click", () => {
-        const amount = Number(card.querySelector("input").value);
-        if (!Number.isFinite(amount) || amount < 0) {
-          alert("代管理金额必须是 0 或更大的数字。");
-          return;
-        }
-        region.managedAmount = amount;
         saveRegions();
         renderAll();
       });
@@ -943,7 +919,7 @@ function renderNetAssetTrend() {
   const trendGrid = document.getElementById("net-asset-trend-grid");
   const values = months.map((month) => {
     const region = financeData.months[month][selectedTrendRegion];
-    return total(region.assets) - total(region.liabilities) - managedAmount(region);
+    return totalOwnedAssets(region) - total(region.liabilities);
   });
   trendGrid.innerHTML = renderSingleTrendCard(months, "净资产趋势", [{ name: "净资产", values, className: "net-asset-series" }]);
   bindChartTooltips(trendGrid);
@@ -952,7 +928,7 @@ function renderNetAssetTrend() {
 function renderAssetLiabilityTrend() {
   const months = Object.keys(financeData.months).sort();
   const trendGrid = document.getElementById("asset-liability-trend-grid");
-  const assetValues = months.map((month) => total(financeData.months[month][selectedTrendRegion].assets));
+  const assetValues = months.map((month) => totalOwnedAssets(financeData.months[month][selectedTrendRegion]));
   const liabilityValues = months.map((month) => total(financeData.months[month][selectedTrendRegion].liabilities));
   const series = [
     { name: "总资产", values: assetValues, className: "asset-series" },
@@ -966,9 +942,10 @@ function renderRegion(id, region) {
   const totalIncome = total(region.income);
   const totalExpenses = total(region.expenses);
   const totalPersonalExpenses = total(region.personalExpenses);
-  const totalAssets = total(region.assets);
+  const totalAssets = totalOwnedAssets(region);
   const totalLiabilities = total(region.liabilities);
-  const netAssets = totalAssets - totalLiabilities - managedAmount(region);
+  const managed = total(managedAssets(region));
+  const netAssets = totalAssets - totalLiabilities;
 
   const transactionRows = (items, label, className, type) =>
     items
@@ -995,31 +972,50 @@ function renderRegion(id, region) {
     <div><span>总收入 ${money(region.currency, totalIncome)}</span><span>总支出 ${money(region.currency, totalExpenses + totalPersonalExpenses)}</span></div>
   `;
 
-  const assetGroups = region.assets.reduce((groups, asset) => {
-    const category = asset.category || "其他资产";
-    if (!groups[category]) groups[category] = [];
-    groups[category].push(asset);
-    return groups;
-  }, {});
+  const ownedAssetItems = ownedAssets(region);
+  const managedAssetItems = managedAssets(region);
+  const renderAssetGroups = (assets) => {
+    const assetGroups = assets.reduce((groups, asset) => {
+      const category = asset.category || "其他资产";
+      if (!groups[category]) groups[category] = [];
+      groups[category].push(asset);
+      return groups;
+    }, {});
 
-  document.getElementById(`${id}-assets`).innerHTML = region.assets.length
-    ? Object.entries(assetGroups)
-        .map(([category, assets]) => {
-          const categoryTotal = total(assets);
-          return `<section class="asset-category-group">
-            <div class="asset-category-heading"><span><i class="asset-category-icon" aria-hidden="true"></i>${escapeHtml(category)} <em>${assets.length} 笔</em></span><strong>${money(region.currency, categoryTotal)}</strong></div>
-            ${assets
-              .map((asset) => {
-                const percentage = totalAssets > 0 ? Math.round((asset.amount / totalAssets) * 100) : 0;
-                const assetLabel = asset.institution ? `${escapeHtml(asset.institution)} ${escapeHtml(asset.name)}` : escapeHtml(asset.name);
-                const noteLabel = asset.note ? `（备注：${escapeHtml(asset.note)}）` : "";
-                return `<div class="asset-row"><span>${assetLabel} — ${money(region.currency, asset.amount)}（${percentage}%）${noteLabel}</span><span class="row-actions"><button class="edit-button" data-edit-region="${id}" data-edit-collection="assets" data-edit-id="${asset.id}">修改</button></span></div>`;
-              })
-              .join("")}
-          </section>`;
-        })
-        .join("")
-    : `<div class="empty-assets"><strong>尚无资产记录</strong><span>点击右上角新增第一笔资产</span><button type="button" class="open-asset-form" data-asset-form-region="${id}">＋ 新增资产</button></div>`;
+    return Object.entries(assetGroups)
+      .map(([category, groupedAssets]) => {
+        const categoryTotal = total(groupedAssets);
+        return `<section class="asset-category-group">
+          <div class="asset-category-heading"><span><i class="asset-category-icon" aria-hidden="true"></i>${escapeHtml(category)} <em>${groupedAssets.length} 笔</em></span><strong>${money(region.currency, categoryTotal)}</strong></div>
+          ${groupedAssets
+            .map((asset) => {
+              const percentage = totalAssets > 0 ? Math.round((asset.amount / totalAssets) * 100) : 0;
+              const assetLabel = asset.institution ? `${escapeHtml(asset.institution)} ${escapeHtml(asset.name)}` : escapeHtml(asset.name);
+              const noteLabel = asset.note ? `（备注：${escapeHtml(asset.note)}）` : "";
+              return `<div class="asset-row"><span>${assetLabel} — ${money(region.currency, asset.amount)}（${percentage}%）${noteLabel}</span><span class="row-actions"><button class="edit-button" data-edit-region="${id}" data-edit-collection="assets" data-edit-id="${asset.id}">修改</button></span></div>`;
+            })
+            .join("")}
+        </section>`;
+      })
+      .join("");
+  };
+
+  const managedAssetsHtml = managedAssetItems.length
+    ? `<section class="asset-category-group managed-assets-group">
+        <div class="asset-category-heading"><span><i class="asset-category-icon" aria-hidden="true"></i>代管资产 <em>${managedAssetItems.length} 笔</em></span><strong>${money(region.currency, total(managedAssetItems))}</strong></div>
+        ${managedAssetItems
+          .map((asset) => {
+            const assetLabel = asset.institution ? `${escapeHtml(asset.institution)} ${escapeHtml(asset.name)}` : escapeHtml(asset.name);
+            const noteLabel = asset.note ? `（备注：${escapeHtml(asset.note)}）` : "";
+            return `<div class="asset-row managed-asset-row"><span>${assetLabel} — ${money(region.currency, asset.amount)} <em class="asset-ownership-badge">代管</em>${noteLabel}</span><span class="row-actions"><button class="edit-button" data-edit-region="${id}" data-edit-collection="assets" data-edit-id="${asset.id}">修改</button></span></div>`;
+          })
+          .join("")}
+      </section>`
+    : "";
+
+  document.getElementById(`${id}-assets`).innerHTML = ownedAssetItems.length
+    ? `${renderAssetGroups(ownedAssetItems)}${managedAssetsHtml}`
+    : `${managedAssetsHtml}<div class="empty-assets"><strong>尚无自有资产记录</strong><span>点击右上角新增第一笔自有资产</span><button type="button" class="open-asset-form" data-asset-form-region="${id}">＋ 新增资产</button></div>`;
 
   document.getElementById(`${id}-liabilities`).innerHTML = region.liabilities
     .map(
@@ -1035,10 +1031,10 @@ function renderRegion(id, region) {
   `;
 
   document.getElementById(`${id}-summary`).innerHTML = `
-    <p>该地区总资产</p>
+    <p>该地区自有总资产</p>
     <strong>${money(region.currency, totalAssets)}</strong>
-    <span>共 ${region.assets.length} 笔资产</span>
-    <div><span>净资产（资产－负债－代管理）</span><b>${money(region.currency, netAssets)}</b></div>
+    <span>共 ${ownedAssets(region).length} 笔自有资产${managedAssets(region).length ? `，另有 ${managedAssets(region).length} 笔代管资产，合计 ${money(region.currency, managed)}` : ""}</span>
+    <div><span>净资产（自有资产－负债）</span><b>${money(region.currency, netAssets)}</b></div>
   `;
 
   bindEditButtons(id, region);
@@ -1073,6 +1069,7 @@ function bindAssetPanelButtons() {
 
 function setupAssetForm(id, region) {
   const categoryInput = document.getElementById(`${id}-category`);
+  const ownershipInput = document.getElementById(`${id}-ownership`);
   const institutionInput = document.getElementById(`${id}-institution`);
   const nameInput = document.getElementById(`${id}-name`);
   const amountInput = document.getElementById(`${id}-amount`);
@@ -1093,6 +1090,7 @@ function setupAssetForm(id, region) {
     currentRegion.assets.push({
       id: createRecordId("asset"),
       category: categoryInput.value,
+      ownership: ownershipInput.value,
       institution,
       name,
       amount,
@@ -1102,6 +1100,7 @@ function setupAssetForm(id, region) {
     saveRegions();
     renderAll();
     institutionInput.value = "";
+    ownershipInput.value = "owned";
     nameInput.value = "";
     amountInput.value = "";
     noteInput.value = "";
@@ -1158,9 +1157,14 @@ function bindEditButtons(id, region) {
       }
       const row = button.closest(".asset-row, .liability-row, .transaction-row");
       row.classList.add("is-editing");
+      row.classList.toggle("asset-editing", collection === "assets");
+      const ownershipField = collection === "assets"
+        ? `<select class="inline-ownership-select" aria-label="资产归属"><option value="owned">自有资产</option><option value="managed">代管资产</option></select>`
+        : "";
       row.innerHTML = `
-        <input class="inline-name-input" type="text" aria-label="修改名称" />
-        <input class="inline-amount-input" type="number" min="0" aria-label="修改金额" />
+        <input class="inline-name-input" type="text" aria-label="修改名称" placeholder="名称" />
+        <input class="inline-amount-input" type="number" min="0" aria-label="修改金额" placeholder="金额" />
+        ${ownershipField}
         <span class="row-actions">
           <button class="save-edit-button" type="button">储存</button>
           <button class="delete-edit-button" type="button">删除</button>
@@ -1169,6 +1173,7 @@ function bindEditButtons(id, region) {
       `;
       row.querySelector(".inline-name-input").value = item.name;
       row.querySelector(".inline-amount-input").value = item.amount;
+      if (collection === "assets") row.querySelector(".inline-ownership-select").value = item.ownership || "owned";
 
       row.querySelector(".cancel-edit-button").addEventListener("click", () => {
         renderRegion(id, region);
@@ -1185,6 +1190,7 @@ function bindEditButtons(id, region) {
 
         item.name = newName;
         item.amount = newAmount;
+        if (collection === "assets") item.ownership = row.querySelector(".inline-ownership-select").value;
         saveRegions();
         renderAll();
       });
@@ -1253,7 +1259,6 @@ function renderAll() {
   renderAssetLiabilityTrend();
   renderAssetAllocation();
   renderSavingsGoals();
-  renderManagedAmountCards();
   bindTrendRegionButtons();
   renderRegion("malaysia", regions.malaysia);
   renderRegion("taiwan", regions.taiwan);

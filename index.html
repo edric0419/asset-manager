@@ -161,6 +161,10 @@
         <select id="malaysia-category" aria-label="Malaysia 资产类别">
           <option>现金</option><option>银行账户</option><option>电子钱包</option><option>股票</option><option>基金／投资</option><option>定期存款</option>
         </select>
+        <select id="malaysia-ownership" aria-label="资产归属">
+          <option value="owned">自有资产</option>
+          <option value="managed">代管资产</option>
+        </select>
         <input id="malaysia-institution" type="text" placeholder="机构／平台，例如 Maybank" />
         <input id="malaysia-name" type="text" placeholder="账户／资产名称，例如 Saving Account" />
         <input id="malaysia-amount" type="number" min="0" placeholder="金额（MYR）" />
@@ -242,6 +246,10 @@
         <select id="taiwan-category" aria-label="Taiwan 资产类别">
           <option>现金</option><option>银行账户</option><option>电子钱包</option><option>股票</option><option>基金／投资</option><option>定期存款</option>
         </select>
+        <select id="taiwan-ownership" aria-label="资产归属">
+          <option value="owned">自有资产</option>
+          <option value="managed">代管资产</option>
+        </select>
         <input id="taiwan-institution" type="text" placeholder="机构／平台，例如 玉山银行" />
         <input id="taiwan-name" type="text" placeholder="账户／资产名称，例如 Saving Account" />
         <input id="taiwan-amount" type="number" min="0" placeholder="金额（TWD）" />
@@ -280,10 +288,6 @@
         <button type="button" id="taiwan-save-note">储存备注</button>
       </div>
       </div>
-    </section>
-    <section class="managed-amount-section tab-section" data-tab-section="assets">
-      <p>代管理金额</p>
-      <div class="managed-amount-grid" id="managed-amount-grid"></div>
     </section>
     </main>
 
