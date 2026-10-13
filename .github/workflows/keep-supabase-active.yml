@@ -1,0 +1,33 @@
+name: Keep Supabase active
+
+on:
+  schedule:
+    # Daily at 10:17 Malaysia time (UTC+8).
+    - cron: "17 2 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  query-database:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out configuration
+        uses: actions/checkout@v4
+
+      - name: Run a lightweight database query
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          supabase_url="$(sed -n 's/^[[:space:]]*url:[[:space:]]*"\([^"]*\)".*/\1/p' supabase-config.js)"
+          publishable_key="$(sed -n 's/^[[:space:]]*publishableKey:[[:space:]]*"\([^"]*\)".*/\1/p' supabase-config.js)"
+
+          test -n "$supabase_url"
+          test -n "$publishable_key"
+
+          curl --fail --silent --show-error --output /dev/null \
+            --header "apikey: $publishable_key" \
+            --header "Authorization: Bearer $publishable_key" \
+            "$supabase_url/rest/v1/finance_records?select=id&limit=1"
