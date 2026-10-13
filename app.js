@@ -189,6 +189,10 @@ function setupAuth() {
   const modal = document.getElementById("auth-modal");
   const emailInput = document.getElementById("auth-email");
   const passwordInput = document.getElementById("auth-password");
+  const passwordResetModal = document.getElementById("password-reset-modal");
+  const newPasswordInput = document.getElementById("new-password");
+  const confirmNewPasswordInput = document.getElementById("confirm-new-password");
+  const passwordResetMessage = document.getElementById("password-reset-message");
 
   document.getElementById("account-button").addEventListener("click", async () => {
     if (currentUser) {
@@ -212,6 +216,63 @@ function setupAuth() {
 
   document.getElementById("auth-close").addEventListener("click", () => {
     modal.hidden = true;
+  });
+
+  document.getElementById("auth-forgot-password").addEventListener("click", async () => {
+    const email = emailInput.value.trim();
+    if (!email) {
+      setAuthMessage("请先输入注册时使用的 Email。", true);
+      return;
+    }
+    setAuthMessage("正在寄送重设密码连结…");
+    const { error } = await supabaseClient.auth.resetPasswordForEmail(email, {
+      redirectTo: window.location.href.split("#")[0],
+    });
+    if (error) {
+      setAuthMessage(error.message, true);
+      return;
+    }
+    setAuthMessage("如该 Email 已注册，重设密码连结已寄出。请检查收件箱和垃圾邮件。");
+  });
+
+  document.getElementById("password-reset-close").addEventListener("click", () => {
+    passwordResetModal.hidden = true;
+  });
+
+  document.getElementById("save-new-password").addEventListener("click", async () => {
+    const password = newPasswordInput.value;
+    const confirmPassword = confirmNewPasswordInput.value;
+    if (password.length < 6) {
+      passwordResetMessage.textContent = "密码至少需要 6 个字。";
+      passwordResetMessage.style.color = "#dc2626";
+      return;
+    }
+    if (password !== confirmPassword) {
+      passwordResetMessage.textContent = "两次输入的密码不一致。";
+      passwordResetMessage.style.color = "#dc2626";
+      return;
+    }
+    passwordResetMessage.textContent = "正在储存新密码…";
+    passwordResetMessage.style.color = "#527d30";
+    const { error } = await supabaseClient.auth.updateUser({ password });
+    if (error) {
+      passwordResetMessage.textContent = error.message;
+      passwordResetMessage.style.color = "#dc2626";
+      return;
+    }
+    newPasswordInput.value = "";
+    confirmNewPasswordInput.value = "";
+    passwordResetModal.hidden = true;
+    await refreshAccount();
+    showToast("密码已更新，请使用新密码登入。");
+  });
+
+  supabaseClient.auth.onAuthStateChange((event) => {
+    if (event !== "PASSWORD_RECOVERY") return;
+    modal.hidden = true;
+    passwordResetMessage.textContent = "";
+    passwordResetModal.hidden = false;
+    newPasswordInput.focus();
   });
 
   passwordInput.addEventListener("keydown", (event) => {
