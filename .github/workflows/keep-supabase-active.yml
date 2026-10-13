@@ -29,5 +29,4 @@ jobs:
 
           curl --fail --silent --show-error --output /dev/null \
             --header "apikey: $publishable_key" \
-            --header "Authorization: Bearer $publishable_key" \
             "$supabase_url/rest/v1/finance_records?select=id&limit=1"
