@@ -109,6 +109,27 @@
         <div class="auth-actions">
           <button type="button" class="auth-login" id="auth-login">登入</button>
           <button type="button" class="auth-signup" id="auth-signup">建立账号</button>
+          <button type="button" class="auth-close" id="auth-forgot-password">忘记密码</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="asset-modal" id="password-reset-modal" hidden>
+      <div class="asset-modal-dialog auth-dialog" role="dialog" aria-modal="true" aria-label="重设密码">
+        <div class="auth-dialog-heading">
+          <div>
+            <strong>重设密码</strong>
+            <p>请输入新的密码后再登入。</p>
+          </div>
+          <button type="button" class="auth-close" id="password-reset-close" aria-label="关闭">×</button>
+        </div>
+        <label for="new-password">新密码</label>
+        <input id="new-password" type="password" autocomplete="new-password" placeholder="至少 6 个字" />
+        <label for="confirm-new-password">确认新密码</label>
+        <input id="confirm-new-password" type="password" autocomplete="new-password" placeholder="再次输入新密码" />
+        <p class="auth-message" id="password-reset-message" aria-live="polite"></p>
+        <div class="auth-actions">
+          <button type="button" class="auth-login" id="save-new-password">储存新密码</button>
         </div>
       </div>
     </div>
