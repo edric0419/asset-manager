@@ -1,0 +1,45 @@
+name: Keep Supabase active
+
+on:
+  schedule:
+    # Daily at 10:17 Malaysia time (UTC+8).
+    - cron: "17 2 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  query-database:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out configuration
+        uses: actions/checkout@v4
+
+      - name: Run a lightweight database query
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          supabase_url="$(sed -n 's/^[[:space:]]*url:[[:space:]]*"\([^"]*\)".*/\1/p' supabase-config.js)"
+          publishable_key="$(sed -n 's/^[[:space:]]*publishableKey:[[:space:]]*"\([^"]*\)".*/\1/p' supabase-config.js)"
+
+          test -n "$supabase_url"
+          test -n "$publishable_key"
+
+          response_file="$(mktemp)"
+          trap 'rm -f "$response_file"' EXIT
+          status="$(curl --silent --show-error --output "$response_file" --write-out "%{http_code}" \
+            --header "apikey: $publishable_key" \
+            "$supabase_url/rest/v1/finance_records?select=id&limit=1")"
+
+          # RLS correctly denies the anonymous runner access to personal records.
+          # The request still reaches PostgREST/Postgres, without exposing any data.
+          if [[ "$status" == "200" ]] || { [[ "$status" == "401" ]] && grep -q '"code":"42501"' "$response_file"; }; then
+            echo "Supabase keepalive query reached the project successfully."
+            exit 0
+          fi
+
+          echo "Unexpected Supabase response: HTTP $status" >&2
+          cat "$response_file" >&2
+          exit 1
