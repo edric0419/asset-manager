@@ -795,8 +795,8 @@ function renderSavingsGoals() {
 }
 
 const expensePieColors = [
-  "#65a30d", "#0ea5e9", "#f59e0b", "#ef4444", "#8b5cf6", "#14b8a6",
-  "#ec4899", "#6366f1", "#84cc16", "#f97316", "#06b6d4", "#a855f7",
+  "#5b9f3b", "#38bdf8", "#fbbf24", "#fb7185", "#a78bfa", "#2dd4bf",
+  "#f472b6", "#818cf8", "#84cc16", "#fb923c", "#22d3ee", "#c084fc",
 ];
 
 function renderExpensePieChart(region) {
@@ -827,7 +827,12 @@ function renderExpensePieChart(region) {
   return `<section class="expense-pie-section">
     <h4>支出项目分布</h4>
     <div class="expense-pie-content">
-      <div class="expense-pie-chart" role="img" aria-label="${escapeHtml(accessibleSummary)}" style="background:conic-gradient(${slices.join(",")})"></div>
+      <div class="expense-pie-chart" role="img" aria-label="${escapeHtml(accessibleSummary)}" style="background:conic-gradient(from -90deg, ${slices.join(",")})">
+        <div class="expense-pie-center">
+          <span>本月总支出</span>
+          <b>${money(region.currency, expenseTotal)}</b>
+        </div>
+      </div>
       <div class="expense-pie-legend">${legend}</div>
     </div>
   </section>`;
