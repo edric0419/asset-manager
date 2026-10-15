@@ -470,6 +470,371 @@ function downloadBackup() {
   URL.revokeObjectURL(downloadUrl);
 }
 
+function setExcelColumnWidths(sheet, widths) {
+  sheet["!cols"] = widths.map((width) => ({ wch: width }));
+}
+
+function applyExcelNumberFormat(sheet, columnIndexes, firstDataRow, lastDataRow) {
+  columnIndexes.forEach((columnIndex) => {
+    for (let rowIndex = firstDataRow; rowIndex <= lastDataRow; rowIndex += 1) {
+      const address = XLSX.utils.encode_cell({ r: rowIndex, c: columnIndex });
+      if (sheet[address] && sheet[address].t === "n") sheet[address].z = "#,##0.00";
+    }
+  });
+}
+
+function styleExcelExampleRow(sheet, rowIndex, columnCount) {
+  for (let columnIndex = 0; columnIndex < columnCount; columnIndex += 1) {
+    const address = XLSX.utils.encode_cell({ r: rowIndex, c: columnIndex });
+    if (!sheet[address]) continue;
+    sheet[address].s = {
+      font: {
+        color: { rgb: "8A94A3" },
+        italic: true,
+      },
+    };
+  }
+}
+
+function exportExcel() {
+  if (!window.XLSX) {
+    alert("Excel 功能载入失败，请确认网络连接后重新整理网页。");
+    return;
+  }
+
+  const overviewRows = [[
+    "月份", "地区", "币种", "总收入", "一般开销", "个人开销", "总支出",
+    "总资产", "总负债", "净资产", "代管资产", "储蓄目标", "备注",
+  ]];
+  const assetRows = [["月份", "地区", "币种", "类别", "归属", "机构／平台", "账户／资产名称", "金额", "备注", "资料编号"]];
+  const transactionRows = [["月份", "地区", "币种", "类型", "项目名称", "金额", "资料编号"]];
+  const liabilityRows = [["月份", "地区", "币种", "债务名称", "金额", "资料编号"]];
+  const regionLabels = { taiwan: "台湾", malaysia: "马来西亚" };
+  const ownershipLabels = { owned: "自有资产", managed: "代管资产", foreign: "外币账户" };
+  const transactionCollections = [
+    ["income", "收入"],
+    ["expenses", "一般开销"],
+    ["personalExpenses", "个人开销"],
+  ];
+
+  Object.keys(financeData.months).sort().forEach((month) => {
+    ["taiwan", "malaysia"].forEach((regionId) => {
+      const region = financeData.months[month][regionId];
+      const incomeTotal = total(region.income);
+      const expenseTotal = total(region.expenses);
+      const personalExpenseTotal = total(region.personalExpenses);
+      const assetTotal = totalOwnedAssets(region);
+      const liabilityTotal = total(region.liabilities);
+      const managedAssetTotal = total(managedAssets(region));
+
+      overviewRows.push([
+        month,
+        regionLabels[regionId],
+        region.currency,
+        incomeTotal,
+        expenseTotal,
+        personalExpenseTotal,
+        expenseTotal + personalExpenseTotal,
+        assetTotal,
+        liabilityTotal,
+        assetTotal - liabilityTotal,
+        managedAssetTotal,
+        Number(financeData.savingsGoals?.[regionId] || 0),
+        region.note || "",
+      ]);
+
+      region.assets.forEach((asset) => {
+        assetRows.push([
+          month,
+          regionLabels[regionId],
+          region.currency,
+          asset.category || "其他资产",
+          ownershipLabels[asset.ownership || "owned"] || "自有资产",
+          asset.institution || "",
+          asset.name,
+          asset.amount,
+          asset.note || "",
+          asset.id || "",
+        ]);
+      });
+
+      transactionCollections.forEach(([collection, typeLabel]) => {
+        region[collection].forEach((item) => {
+          transactionRows.push([month, regionLabels[regionId], region.currency, typeLabel, item.name, item.amount, item.id || ""]);
+        });
+      });
+
+      region.liabilities.forEach((liability) => {
+        liabilityRows.push([month, regionLabels[regionId], region.currency, liability.name, liability.amount, liability.id || ""]);
+      });
+    });
+  });
+
+  const workbook = XLSX.utils.book_new();
+  const overviewSheet = XLSX.utils.aoa_to_sheet(overviewRows);
+  const assetSheet = XLSX.utils.aoa_to_sheet(assetRows);
+  const transactionSheet = XLSX.utils.aoa_to_sheet(transactionRows);
+  const liabilitySheet = XLSX.utils.aoa_to_sheet(liabilityRows);
+
+  setExcelColumnWidths(overviewSheet, [12, 12, 8, 14, 14, 14, 14, 14, 14, 14, 14, 14, 30]);
+  setExcelColumnWidths(assetSheet, [12, 12, 8, 16, 14, 22, 24, 14, 28, 38]);
+  setExcelColumnWidths(transactionSheet, [12, 12, 8, 14, 20, 14, 38]);
+  setExcelColumnWidths(liabilitySheet, [12, 12, 8, 24, 14, 38]);
+  applyExcelNumberFormat(overviewSheet, [3, 4, 5, 6, 7, 8, 9, 10, 11], 1, overviewRows.length - 1);
+  applyExcelNumberFormat(assetSheet, [7], 1, assetRows.length - 1);
+  applyExcelNumberFormat(transactionSheet, [5], 1, transactionRows.length - 1);
+  applyExcelNumberFormat(liabilitySheet, [4], 1, liabilityRows.length - 1);
+
+  XLSX.utils.book_append_sheet(workbook, overviewSheet, "月度总览");
+  XLSX.utils.book_append_sheet(workbook, assetSheet, "资产明细");
+  XLSX.utils.book_append_sheet(workbook, transactionSheet, "收支明细");
+  XLSX.utils.book_append_sheet(workbook, liabilitySheet, "负债明细");
+  XLSX.writeFile(workbook, `personal-finance-${new Date().toISOString().slice(0, 10)}.xlsx`);
+}
+
+function downloadExcelTemplate() {
+  if (!window.XLSX) {
+    alert("Excel 功能载入失败，请确认网络连接后重新整理网页。");
+    return;
+  }
+
+  const workbook = XLSX.utils.book_new();
+  const instructionSheet = XLSX.utils.aoa_to_sheet([
+    ["个人资产管理 Excel 模板"],
+    [],
+    ["使用方式", "依照各工作表的栏位填写资料。"],
+    ["灰色范例", "每个工作表的第二行是灰色范例，可直接删除后填写。"],
+    ["月份格式", "YYYY-MM，例如 2026-08"],
+    ["金额格式", "只输入数字，不要加入币种符号。"],
+    ["币种", "台湾使用 NT$，马来西亚使用 RM。"],
+    ["提醒", "目前网页尚未支援从 Excel 导入；此模板用于 Excel 整理与记录。"],
+  ]);
+  const overviewSheet = XLSX.utils.aoa_to_sheet([
+    [
+      "月份", "地区", "币种", "总收入", "一般开销", "个人开销", "总支出",
+      "总资产", "总负债", "净资产", "代管资产", "储蓄目标", "备注",
+    ],
+    ["2026-08", "台湾", "NT$", 65000, 12000, 3000, 15000, 205000, 0, 205000, 0, 90000, "范例：本月增加定期存款"],
+  ]);
+  const assetSheet = XLSX.utils.aoa_to_sheet([
+    ["月份", "地区", "币种", "类别", "归属", "机构／平台", "账户／资产名称", "金额", "备注", "资料编号"],
+    ["2026-08", "台湾", "NT$", "银行账户", "自有资产", "华南银行", "Saving Account", 120000, "范例资料", "范例编号"],
+  ]);
+  const transactionSheet = XLSX.utils.aoa_to_sheet([
+    ["月份", "地区", "币种", "类型", "项目名称", "金额", "资料编号"],
+    ["2026-08", "台湾", "NT$", "一般开销", "晚餐", 250, "范例编号"],
+  ]);
+  const liabilitySheet = XLSX.utils.aoa_to_sheet([
+    ["月份", "地区", "币种", "债务名称", "金额", "资料编号"],
+    ["2026-08", "台湾", "NT$", "信用卡账单", 3000, "范例编号"],
+  ]);
+
+  setExcelColumnWidths(instructionSheet, [18, 62]);
+  setExcelColumnWidths(overviewSheet, [12, 12, 8, 14, 14, 14, 14, 14, 14, 14, 14, 14, 30]);
+  setExcelColumnWidths(assetSheet, [12, 12, 8, 16, 14, 22, 24, 14, 28, 38]);
+  setExcelColumnWidths(transactionSheet, [12, 12, 8, 14, 20, 14, 38]);
+  setExcelColumnWidths(liabilitySheet, [12, 12, 8, 24, 14, 38]);
+  styleExcelExampleRow(overviewSheet, 1, 13);
+  styleExcelExampleRow(assetSheet, 1, 10);
+  styleExcelExampleRow(transactionSheet, 1, 7);
+  styleExcelExampleRow(liabilitySheet, 1, 6);
+  applyExcelNumberFormat(overviewSheet, [3, 4, 5, 6, 7, 8, 9, 10, 11], 1, 1);
+  applyExcelNumberFormat(assetSheet, [7], 1, 1);
+  applyExcelNumberFormat(transactionSheet, [5], 1, 1);
+  applyExcelNumberFormat(liabilitySheet, [4], 1, 1);
+
+  XLSX.utils.book_append_sheet(workbook, instructionSheet, "使用说明");
+  XLSX.utils.book_append_sheet(workbook, overviewSheet, "月度总览");
+  XLSX.utils.book_append_sheet(workbook, assetSheet, "资产明细");
+  XLSX.utils.book_append_sheet(workbook, transactionSheet, "收支明细");
+  XLSX.utils.book_append_sheet(workbook, liabilitySheet, "负债明细");
+  XLSX.writeFile(workbook, "personal-finance-template.xlsx");
+}
+
+function excelRows(workbook, sheetName) {
+  const sheet = workbook.Sheets[sheetName];
+  return sheet ? XLSX.utils.sheet_to_json(sheet, { defval: "", raw: true }) : [];
+}
+
+function isExcelExampleRow(row) {
+  return Object.values(row).some((value) => String(value).trim() === "范例编号")
+    || String(row["备注"] || "").trim().startsWith("范例：");
+}
+
+function excelMonth(value, sheetName, rowNumber) {
+  const normalized = String(value ?? "").trim().replace("/", "-");
+  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(normalized)) {
+    throw new Error(`${sheetName} 第 ${rowNumber} 行的月份格式错误，请使用 YYYY-MM。`);
+  }
+  return normalized;
+}
+
+function excelRegion(value, sheetName, rowNumber) {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  const aliases = {
+    "台湾": "taiwan",
+    "台灣": "taiwan",
+    "taiwan": "taiwan",
+    "taiwan（twd）": "taiwan",
+    "taiwan (twd)": "taiwan",
+    "马来西亚": "malaysia",
+    "馬來西亞": "malaysia",
+    "malaysia": "malaysia",
+    "malaysia（myr）": "malaysia",
+    "malaysia (myr)": "malaysia",
+  };
+  const regionId = aliases[normalized];
+  if (!regionId) throw new Error(`${sheetName} 第 ${rowNumber} 行的地区必须是台湾或马来西亚。`);
+  return regionId;
+}
+
+function excelAmount(value, sheetName, rowNumber, fieldName, allowZero = true) {
+  if (value === "" || value === null || value === undefined) {
+    throw new Error(`${sheetName} 第 ${rowNumber} 行缺少${fieldName}。`);
+  }
+  const amount = Number(value);
+  if (!Number.isFinite(amount) || amount < 0 || (!allowZero && amount === 0)) {
+    throw new Error(`${sheetName} 第 ${rowNumber} 行的${fieldName}必须是${allowZero ? "大于或等于 0" : "大于 0"}的数字。`);
+  }
+  return amount;
+}
+
+function validateExcelCurrency(value, regionId, sheetName, rowNumber) {
+  const currency = String(value ?? "").trim();
+  const expected = regionId === "taiwan" ? "NT$" : "RM";
+  if (currency !== expected) {
+    throw new Error(`${sheetName} 第 ${rowNumber} 行的币种应为 ${expected}。`);
+  }
+}
+
+function parseExcelImport(workbook) {
+  const requiredSheets = ["月度总览", "资产明细", "收支明细", "负债明细"];
+  if (!requiredSheets.some((sheetName) => workbook.Sheets[sheetName])) {
+    throw new Error("找不到系统使用的工作表，请先下载模板再填写。");
+  }
+
+  const importedMonths = {};
+  const touchedRegions = new Set();
+  const importedGoals = {};
+  const regionLabels = { taiwan: "台湾", malaysia: "马来西亚" };
+
+  const getImportedRegion = (month, regionId) => {
+    if (!importedMonths[month]) importedMonths[month] = {};
+    if (!importedMonths[month][regionId]) {
+      importedMonths[month][regionId] = createEmptyRegions()[regionId];
+    }
+    touchedRegions.add(`${month}|${regionId}`);
+    return importedMonths[month][regionId];
+  };
+
+  excelRows(workbook, "月度总览").forEach((row, index) => {
+    if (isExcelExampleRow(row) || !String(row["月份"] || "").trim()) return;
+    const rowNumber = index + 2;
+    const month = excelMonth(row["月份"], "月度总览", rowNumber);
+    const regionId = excelRegion(row["地区"], "月度总览", rowNumber);
+    validateExcelCurrency(row["币种"], regionId, "月度总览", rowNumber);
+    const region = getImportedRegion(month, regionId);
+    region.note = String(row["备注"] || "").trim();
+    if (row["储蓄目标"] !== "") {
+      importedGoals[regionId] = excelAmount(row["储蓄目标"], "月度总览", rowNumber, "储蓄目标", true);
+    }
+  });
+
+  excelRows(workbook, "资产明细").forEach((row, index) => {
+    if (isExcelExampleRow(row) || !String(row["月份"] || "").trim()) return;
+    const rowNumber = index + 2;
+    const month = excelMonth(row["月份"], "资产明细", rowNumber);
+    const regionId = excelRegion(row["地区"], "资产明细", rowNumber);
+    validateExcelCurrency(row["币种"], regionId, "资产明细", rowNumber);
+    const category = String(row["类别"] || "").trim();
+    const institution = String(row["机构／平台"] || "").trim();
+    const name = String(row["账户／资产名称"] || "").trim();
+    if (!category || !institution || !name) throw new Error(`资产明细 第 ${rowNumber} 行缺少类别、机构或资产名称。`);
+    const ownershipMap = { "": "owned", "自有资产": "owned", "代管资产": "managed", "外币账户": "foreign" };
+    const ownershipLabel = String(row["归属"] || "").trim();
+    const ownership = ownershipMap[ownershipLabel];
+    if (!ownership) throw new Error(`资产明细 第 ${rowNumber} 行的归属格式错误。`);
+    if (ownership === "foreign" && (regionId !== "taiwan" || category !== "银行账户")) {
+      throw new Error(`资产明细 第 ${rowNumber} 行的外币账户只能用于台湾的银行账户。`);
+    }
+    getImportedRegion(month, regionId).assets.push({
+      id: createRecordId("asset"),
+      category,
+      ownership,
+      institution,
+      name,
+      amount: excelAmount(row["金额"], "资产明细", rowNumber, "金额"),
+      note: String(row["备注"] || "").trim(),
+    });
+  });
+
+  const transactionTypeMap = { "收入": "income", "一般开销": "expenses", "开销": "expenses", "个人开销": "personalExpenses" };
+  excelRows(workbook, "收支明细").forEach((row, index) => {
+    if (isExcelExampleRow(row) || !String(row["月份"] || "").trim()) return;
+    const rowNumber = index + 2;
+    const month = excelMonth(row["月份"], "收支明细", rowNumber);
+    const regionId = excelRegion(row["地区"], "收支明细", rowNumber);
+    validateExcelCurrency(row["币种"], regionId, "收支明细", rowNumber);
+    const collection = transactionTypeMap[String(row["类型"] || "").trim()];
+    const name = String(row["项目名称"] || "").trim();
+    if (!collection || !name) throw new Error(`收支明细 第 ${rowNumber} 行的类型或项目名称错误。`);
+    getImportedRegion(month, regionId)[collection].push({
+      id: createRecordId(collection === "personalExpenses" ? "personal-expense" : collection),
+      name,
+      amount: excelAmount(row["金额"], "收支明细", rowNumber, "金额"),
+    });
+  });
+
+  excelRows(workbook, "负债明细").forEach((row, index) => {
+    if (isExcelExampleRow(row) || !String(row["月份"] || "").trim()) return;
+    const rowNumber = index + 2;
+    const month = excelMonth(row["月份"], "负债明细", rowNumber);
+    const regionId = excelRegion(row["地区"], "负债明细", rowNumber);
+    validateExcelCurrency(row["币种"], regionId, "负债明细", rowNumber);
+    const name = String(row["债务名称"] || "").trim();
+    if (!name) throw new Error(`负债明细 第 ${rowNumber} 行缺少债务名称。`);
+    getImportedRegion(month, regionId).liabilities.push({
+      id: createRecordId("liability"),
+      name,
+      amount: excelAmount(row["金额"], "负债明细", rowNumber, "金额"),
+    });
+  });
+
+  if (!touchedRegions.size) throw new Error("没有找到可导入的资料。灰色范例不会被导入。");
+  return { importedMonths, touchedRegions, importedGoals, regionLabels };
+}
+
+async function importExcel(file) {
+  try {
+    if (!window.XLSX) throw new Error("Excel 功能载入失败，请确认网络连接后重新整理网页。");
+    const workbook = XLSX.read(await file.arrayBuffer(), { type: "array" });
+    const { importedMonths, touchedRegions, importedGoals, regionLabels } = parseExcelImport(workbook);
+    const affected = [...touchedRegions]
+      .sort()
+      .map((key) => {
+        const [month, regionId] = key.split("|");
+        return `${month} ${regionLabels[regionId]}`;
+      });
+    if (!confirm(`导入会覆盖以下月份和地区的现有资料：\n\n${affected.join("\n")}\n\n若已登入，更新也会同步到线上。建议先下载资料备份。\n\n确定继续吗？`)) return;
+
+    touchedRegions.forEach((key) => {
+      const [month, regionId] = key.split("|");
+      if (!financeData.months[month]) financeData.months[month] = createEmptyRegions();
+      financeData.months[month][regionId] = importedMonths[month][regionId];
+    });
+    Object.assign(financeData.savingsGoals, importedGoals);
+    selectedMonth = [...touchedRegions].map((key) => key.split("|")[0]).sort().at(-1);
+    financeData.selectedMonth = selectedMonth;
+    regions = financeData.months[selectedMonth];
+    pickerYear = Number(selectedMonth.slice(0, 4));
+    saveRegions();
+    renderAll();
+    alert(`Excel 导入完成，共更新 ${touchedRegions.size} 个月份／地区。`);
+  } catch (error) {
+    alert(`无法导入 Excel：${error.message || "档案格式错误。"}`);
+  }
+}
+
 function isBackupData(data) {
   if (!data || typeof data !== "object" || !data.months || typeof data.months !== "object") {
     return "找不到月份资料。";
@@ -1418,6 +1783,16 @@ document.getElementById("month-current").addEventListener("click", () => {
 });
 
 document.getElementById("download-backup").addEventListener("click", downloadBackup);
+document.getElementById("download-excel-template").addEventListener("click", downloadExcelTemplate);
+document.getElementById("import-excel").addEventListener("click", () => {
+  document.getElementById("excel-import-file").click();
+});
+document.getElementById("excel-import-file").addEventListener("change", (event) => {
+  const [file] = event.target.files;
+  if (file) importExcel(file);
+  event.target.value = "";
+});
+document.getElementById("export-excel").addEventListener("click", exportExcel);
 document.getElementById("restore-backup").addEventListener("click", () => {
   document.getElementById("backup-file").click();
 });

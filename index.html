@@ -83,6 +83,18 @@
           <input id="backup-file" type="file" accept="application/json,.json" hidden />
         </div>
       </div>
+      <div class="backup-tools export-tools">
+        <div>
+          <strong>输出 Excel</strong>
+          <span>将所有月份的总览、资产、收支和负债整理成 Excel 档案。</span>
+        </div>
+        <div class="backup-actions">
+          <button type="button" id="download-excel-template" class="template-excel-button">下载模板</button>
+          <button type="button" id="import-excel" class="import-excel-button">导入 Excel</button>
+          <button type="button" id="export-excel" class="export-excel-button">输出 Excel</button>
+          <input id="excel-import-file" type="file" accept=".xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel" hidden />
+        </div>
+      </div>
       <div class="cloud-sync-tools" id="cloud-sync-tools" hidden>
         <div>
           <strong>线上同步</strong>
@@ -291,6 +303,7 @@
     </section>
     </main>
 
+    <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="supabase-config.js"></script>
     <script src="app.js"></script>

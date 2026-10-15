@@ -791,6 +791,7 @@ body[data-active-tab="settings"] .regions-grid {
 
 .backup-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   flex-shrink: 0;
 }
@@ -807,6 +808,27 @@ body[data-active-tab="settings"] .regions-grid {
 
 .backup-actions button:last-of-type {
   background: #475569;
+}
+
+.backup-actions button.export-excel-button {
+  background: #65a30d;
+  font-weight: bold;
+}
+
+.backup-actions button.export-excel-button:hover {
+  background: #4f861f;
+}
+
+.backup-actions button.template-excel-button {
+  border: 1px solid #94a3b8;
+  background: white;
+  color: #475569;
+  font-weight: bold;
+}
+
+.backup-actions button.template-excel-button:hover {
+  border-color: #65a30d;
+  color: #4f861f;
 }
 
 .dashboard-grid {
@@ -2467,6 +2489,12 @@ body.dark-mode .copy-previous-assets {
   border-color: #2d3a40;
   background: #1a2226;
   color: #c4d0d6;
+}
+
+body.dark-mode .backup-actions button.template-excel-button {
+  border-color: #3a4a52;
+  background: #27343a;
+  color: #d9e2e7;
 }
 
 body.dark-mode .dashboard-region h3,
