@@ -373,6 +373,24 @@ function escapeHtml(value) {
     .replace(/'/g, "&#039;");
 }
 
+const incomeNameCategories = [
+  "工資", "獎金", "反饋", "交易", "股息", "租金", "投資", "其他", "旅游預算",
+];
+
+const expenseNameCategories = [
+  "早餐", "午餐", "晚餐", "宵夜", "饮品", "点心", "食材", "酒类",
+  "交通", "购物", "娱乐", "日用品", "房租", "医疗", "社交", "礼物",
+  "数码", "其他", "倉鼠", "捐款", "學習", "電子發票", "健身",
+];
+
+function transactionNameOptions(type, selectedName = "") {
+  const categories = type === "income" ? incomeNameCategories : expenseNameCategories;
+  const names = selectedName && !categories.includes(selectedName)
+    ? [selectedName, ...categories]
+    : categories;
+  return `<option value="">请选择项目名称</option>${names.map((name) => `<option value="${escapeHtml(name)}"${name === selectedName ? " selected" : ""}>${escapeHtml(name)}</option>`).join("")}`;
+}
+
 function createEmptyRegions() {
   return {
     malaysia: {
@@ -776,6 +794,45 @@ function renderSavingsGoals() {
   });
 }
 
+const expensePieColors = [
+  "#65a30d", "#0ea5e9", "#f59e0b", "#ef4444", "#8b5cf6", "#14b8a6",
+  "#ec4899", "#6366f1", "#84cc16", "#f97316", "#06b6d4", "#a855f7",
+];
+
+function renderExpensePieChart(region) {
+  const groupedExpenses = [...region.expenses, ...region.personalExpenses].reduce((groups, item) => {
+    const name = item.name || "其他";
+    groups[name] = (groups[name] || 0) + item.amount;
+    return groups;
+  }, {});
+  const entries = Object.entries(groupedExpenses).sort((a, b) => b[1] - a[1]);
+  const expenseTotal = entries.reduce((sum, [, amount]) => sum + amount, 0);
+
+  if (!expenseTotal) {
+    return `<section class="expense-pie-section"><h4>支出项目分布</h4><div class="expense-pie-empty"><i aria-hidden="true"></i><span>尚无支出资料</span></div></section>`;
+  }
+
+  let currentPercent = 0;
+  const slices = entries.map(([, amount], index) => {
+    const start = currentPercent;
+    currentPercent += (amount / expenseTotal) * 100;
+    return `${expensePieColors[index % expensePieColors.length]} ${start.toFixed(2)}% ${currentPercent.toFixed(2)}%`;
+  });
+  const accessibleSummary = entries.map(([name, amount]) => `${name} ${((amount / expenseTotal) * 100).toFixed(1)}%`).join("、");
+  const legend = entries.map(([name, amount], index) => {
+    const percentage = (amount / expenseTotal) * 100;
+    return `<div class="expense-pie-legend-row"><span><i style="background:${expensePieColors[index % expensePieColors.length]}"></i>${escapeHtml(name)}</span><b>${money(region.currency, amount)} · ${percentage.toFixed(1)}%</b></div>`;
+  }).join("");
+
+  return `<section class="expense-pie-section">
+    <h4>支出项目分布</h4>
+    <div class="expense-pie-content">
+      <div class="expense-pie-chart" role="img" aria-label="${escapeHtml(accessibleSummary)}" style="background:conic-gradient(${slices.join(",")})"></div>
+      <div class="expense-pie-legend">${legend}</div>
+    </div>
+  </section>`;
+}
+
 function renderIncomeOverview() {
   const highlightGrid = document.getElementById("income-highlight-grid");
   const labels = { taiwan: "台湾", malaysia: "马来西亚" };
@@ -799,6 +856,7 @@ function renderIncomeOverview() {
                 <span>↘ 总支出 <b>${money(region.currency, expenses)}</b></span>
               </div>
             </div>
+            ${renderExpensePieChart(region)}
             <p class="income-help">总支出＝一般开销＋个人开销</p>
           </article>
           <div class="income-metric-grid">
@@ -963,12 +1021,24 @@ function renderRegion(id, region) {
   const totalAssets = totalOwnedAssets(region);
   const totalLiabilities = total(region.liabilities);
   const netAssets = totalAssets - totalLiabilities;
+  const previousRegion = financeData.months[getPreviousMonthKey()]?.[id];
+
+  const renderTransactionChange = (type, name) => {
+    if (!previousRegion) return `<em class="transaction-change no-previous-data">无上月资料</em>`;
+    const currentAmount = region[type].filter((item) => item.name === name).reduce((sum, item) => sum + item.amount, 0);
+    const previousAmount = previousRegion[type].filter((item) => item.name === name).reduce((sum, item) => sum + item.amount, 0);
+    const difference = currentAmount - previousAmount;
+    if (difference === 0) return `<em class="transaction-change transaction-unchanged" title="与上个月相同">— ${money(region.currency, 0)}</em>`;
+    const isIncrease = difference > 0;
+    const isFavorable = type === "income" ? isIncrease : !isIncrease;
+    return `<em class="transaction-change ${isFavorable ? "transaction-favorable" : "transaction-unfavorable"}" title="比上个月${isIncrease ? "增加" : "减少"}">${isIncrease ? "↑" : "↓"} ${money(region.currency, Math.abs(difference))}</em>`;
+  };
 
   const transactionRows = (items, label, className, type) =>
     items
       .map(
         (item) =>
-          `<div class="transaction-row example-row ${className}"><span>${label}：${escapeHtml(item.name)} — ${money(region.currency, item.amount)}</span><span class="row-actions"><button class="edit-button" data-edit-region="${id}" data-edit-collection="${type}" data-edit-id="${item.id}">修改</button></span></div>`
+          `<div class="transaction-row example-row ${className}"><span>${label}：${escapeHtml(item.name)} — ${money(region.currency, item.amount)} ${renderTransactionChange(type, item.name)}</span><span class="row-actions"><button class="edit-button" data-edit-region="${id}" data-edit-collection="${type}" data-edit-id="${item.id}">修改</button></span></div>`
       )
       .join("");
 
@@ -1149,8 +1219,14 @@ function setupTransactionForm(id, region) {
   const nameInput = document.getElementById(`${id}-transaction-name`);
   const amountInput = document.getElementById(`${id}-transaction-amount`);
   const addButton = document.getElementById(`${id}-add-transaction`);
+  const addAnotherButton = document.getElementById(`${id}-add-another-transaction`);
+  const updateNameOptions = () => {
+    nameInput.innerHTML = transactionNameOptions(typeInput.value);
+  };
+  typeInput.addEventListener("change", updateNameOptions);
+  updateNameOptions();
 
-  addButton.addEventListener("click", () => {
+  const saveTransaction = (keepFormOpen) => {
     const currentRegion = getCurrentRegions()[id];
     const name = nameInput.value.trim();
     const amount = Number(amountInput.value);
@@ -1165,8 +1241,16 @@ function setupTransactionForm(id, region) {
     renderAll();
     nameInput.value = "";
     amountInput.value = "";
-    document.getElementById(`${id}-transaction-modal`).hidden = true;
-  });
+    const modal = document.getElementById(`${id}-transaction-modal`);
+    modal.hidden = !keepFormOpen;
+    if (keepFormOpen) {
+      nameInput.focus();
+      showToast("已保存，可以继续记录下一笔。");
+    }
+  };
+
+  addButton.addEventListener("click", () => saveTransaction(false));
+  addAnotherButton.addEventListener("click", () => saveTransaction(true));
 }
 
 function setupTransactionPanel(id) {
@@ -1191,8 +1275,12 @@ function bindEditButtons(id, region) {
       const ownershipField = collection === "assets"
         ? `<select class="inline-ownership-select" aria-label="资产归属"><option value="owned">自有资产</option><option value="managed">代管资产</option>${id === "taiwan" && item.category === "银行账户" ? '<option value="foreign">外币账户</option>' : ""}</select>`
         : "";
+      const isTransaction = ["income", "expenses", "personalExpenses"].includes(collection);
+      const nameField = isTransaction
+        ? `<select class="inline-name-input" aria-label="修改项目名称">${transactionNameOptions(collection, item.name)}</select>`
+        : `<input class="inline-name-input" type="text" aria-label="修改名称" placeholder="名称" />`;
       row.innerHTML = `
-        <input class="inline-name-input" type="text" aria-label="修改名称" placeholder="名称" />
+        ${nameField}
         <input class="inline-amount-input" type="number" min="0" aria-label="修改金额" placeholder="金额" />
         ${ownershipField}
         <span class="row-actions">

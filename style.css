@@ -572,6 +572,110 @@ body[data-active-tab="settings"] .regions-grid {
   font-size: 14px;
 }
 
+.expense-pie-section {
+  margin-top: 22px;
+  padding-top: 20px;
+  border-top: 1px solid #e2e8f0;
+}
+
+.expense-pie-section h4 {
+  margin: 0 0 16px;
+  font-size: 16px;
+}
+
+.expense-pie-content {
+  display: grid;
+  grid-template-columns: 120px minmax(0, 1fr);
+  gap: 20px;
+  align-items: center;
+}
+
+.expense-pie-chart {
+  width: 120px;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.08);
+}
+
+.expense-pie-legend {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  max-height: 180px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.expense-pie-legend-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  color: #64748b;
+  font-size: 13px;
+}
+
+.expense-pie-legend-row span {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.expense-pie-legend-row span i {
+  flex: 0 0 auto;
+  width: 9px;
+  height: 9px;
+  margin-right: 7px;
+  border-radius: 50%;
+}
+
+.expense-pie-legend-row b {
+  white-space: nowrap;
+  color: #334155;
+}
+
+.transaction-change {
+  display: inline-block;
+  margin-left: 7px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: #f1f5f9;
+  white-space: nowrap;
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 700;
+}
+
+.transaction-unfavorable {
+  background: #fef2f2;
+  color: #dc2626;
+}
+
+.transaction-favorable {
+  background: #f0f8eb;
+  color: #65a30d;
+}
+
+.transaction-unchanged,
+.no-previous-data {
+  color: #94a3b8;
+  font-weight: 500;
+}
+
+.expense-pie-empty {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: #94a3b8;
+  font-size: 14px;
+}
+
+.expense-pie-empty i {
+  width: 38px;
+  height: 38px;
+  border: 6px solid #e2e8f0;
+  border-radius: 50%;
+}
+
 .income-metric-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -2213,6 +2317,18 @@ body[data-active-tab="assets"] .country-section:has(#taiwan-summary) {
   .income-metric-grid {
     grid-template-columns: 1fr;
   }
+
+  .expense-pie-content {
+    grid-template-columns: 1fr;
+  }
+
+  .expense-pie-chart {
+    margin: 0 auto;
+  }
+
+  .expense-pie-legend {
+    max-height: none;
+  }
 }
 
 body.dark-mode {
@@ -2509,6 +2625,40 @@ body.dark-mode .empty-assets strong {
 
 body.dark-mode .income-balance-box {
   background: #151d21;
+}
+
+body.dark-mode .expense-pie-section {
+  border-color: #2d3a40;
+}
+
+body.dark-mode .expense-pie-section h4,
+body.dark-mode .expense-pie-legend-row b {
+  color: #f1f5f9;
+}
+
+body.dark-mode .expense-pie-legend-row,
+body.dark-mode .expense-pie-empty {
+  color: #9eabb5;
+}
+
+body.dark-mode .transaction-unfavorable {
+  background: #3a2426;
+  color: #ff686f;
+}
+
+body.dark-mode .transaction-favorable {
+  background: #203522;
+  color: #8bd15c;
+}
+
+body.dark-mode .transaction-unchanged,
+body.dark-mode .no-previous-data {
+  background: #27343a;
+  color: #84939d;
+}
+
+body.dark-mode .expense-pie-empty i {
+  border-color: #334149;
 }
 
 body.dark-mode .single-trend-heading p,
