@@ -2,8 +2,8 @@ name: Keep Supabase active
 
 on:
   schedule:
-    # Daily at 10:17 Malaysia time (UTC+8).
-    - cron: "17 2 * * *"
+    # Daily at 10:17 and 22:17 Malaysia time (UTC+8).
+    - cron: "17 2,14 * * *"
   workflow_dispatch:
 
 permissions:
@@ -16,8 +16,11 @@ jobs:
       - name: Check out configuration
         uses: actions/checkout@v4
 
-      - name: Run the safe keepalive query
+      - name: Sign in and update the private heartbeat
         shell: bash
+        env:
+          HEARTBEAT_EMAIL: ${{ secrets.SUPABASE_HEARTBEAT_EMAIL }}
+          HEARTBEAT_PASSWORD: ${{ secrets.SUPABASE_HEARTBEAT_PASSWORD }}
         run: |
           set -euo pipefail
 
@@ -26,21 +29,47 @@ jobs:
 
           test -n "$supabase_url"
           test -n "$publishable_key"
+          test -n "$HEARTBEAT_EMAIL"
+          test -n "$HEARTBEAT_PASSWORD"
 
-          response_file="$(mktemp)"
-          trap 'rm -f "$response_file"' EXIT
-          status="$(curl --silent --show-error --output "$response_file" --write-out "%{http_code}" \
+          auth_response="$(mktemp)"
+          heartbeat_response="$(mktemp)"
+          trap 'rm -f "$auth_response" "$heartbeat_response"' EXIT
+
+          auth_payload="$(jq -cn --arg email "$HEARTBEAT_EMAIL" --arg password "$HEARTBEAT_PASSWORD" '{email: $email, password: $password}')"
+          auth_status="$(curl --silent --show-error --output "$auth_response" --write-out "%{http_code}" \
             --request POST \
             --header "apikey: $publishable_key" \
             --header "Content-Type: application/json" \
-            --data '{}' \
-            "$supabase_url/rest/v1/rpc/github_keepalive")"
+            --data "$auth_payload" \
+            "$supabase_url/auth/v1/token?grant_type=password")"
 
-          # github_keepalive returns only {"ok": true}; it never reads or writes finance data.
-          if [[ "$status" == "200" ]] && grep -Eq '"ok"[[:space:]]*:[[:space:]]*true' "$response_file"; then
-            echo "Supabase keepalive query completed successfully (HTTP 200)."
+          if [[ "$auth_status" != "200" ]]; then
+            echo "Heartbeat account sign-in failed: HTTP $auth_status" >&2
+            exit 1
+          fi
+
+          access_token="$(jq -r '.access_token // empty' "$auth_response")"
+          user_id="$(jq -r '.user.id // empty' "$auth_response")"
+          if [[ -z "$access_token" || -z "$user_id" ]]; then
+            echo "Heartbeat account sign-in response was incomplete." >&2
+            exit 1
+          fi
+
+          heartbeat_payload="$(jq -cn --arg user_id "$user_id" --arg last_seen_at "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" '{user_id: $user_id, last_seen_at: $last_seen_at}')"
+          heartbeat_status="$(curl --silent --show-error --output "$heartbeat_response" --write-out "%{http_code}" \
+            --request POST \
+            --header "apikey: $publishable_key" \
+            --header "Authorization: Bearer $access_token" \
+            --header "Content-Type: application/json" \
+            --header "Prefer: resolution=merge-duplicates,return=minimal" \
+            --data "$heartbeat_payload" \
+            "$supabase_url/rest/v1/system_heartbeats?on_conflict=user_id")"
+
+          if [[ "$heartbeat_status" == "200" || "$heartbeat_status" == "201" || "$heartbeat_status" == "204" ]]; then
+            echo "Heartbeat account signed in and updated its private heartbeat successfully."
             exit 0
           fi
 
-          echo "Unexpected Supabase response: HTTP $status" >&2
+          echo "Heartbeat update failed: HTTP $heartbeat_status" >&2
           exit 1
