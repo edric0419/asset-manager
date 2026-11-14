@@ -86,7 +86,7 @@ function getCloudRecords(userId) {
 }
 
 async function loadCloudData() {
-  if (!currentUser) return;
+  if (!currentUser) return null;
   const userId = currentUser.id;
   const [recordsResult, settingsResult, goalsResult] = await Promise.all([
     supabaseClient.from("finance_records").select("*").eq("user_id", userId),
@@ -94,11 +94,25 @@ async function loadCloudData() {
     supabaseClient.from("savings_goals").select("*").eq("user_id", userId),
   ]);
   const error = recordsResult.error || settingsResult.error || goalsResult.error;
-  if (error) return;
+  if (error) {
+    showToast("无法读取线上资料，已保留目前画面。");
+    return null;
+  }
   const records = recordsResult.data || [];
   const settings = settingsResult.data || [];
   const goals = goalsResult.data || [];
-  if (!records.length && !settings.length && !goals.length) return;
+  if (!records.length && !settings.length && !goals.length) {
+    const emptyData = createInitialFinanceData();
+    financeData.months = emptyData.months;
+    financeData.savingsGoals = emptyData.savingsGoals;
+    selectedMonth = emptyData.selectedMonth;
+    financeData.selectedMonth = selectedMonth;
+    regions = financeData.months[selectedMonth];
+    pickerYear = Number(selectedMonth.slice(0, 4));
+    localStorage.removeItem(`personal-finance-cloud-imported-${userId}`);
+    renderAll();
+    return false;
+  }
 
   const months = {};
   const ensureMonth = (monthKey) => {
@@ -128,6 +142,7 @@ async function loadCloudData() {
   localStorage.setItem(`personal-finance-cloud-imported-${userId}`, "true");
   saveRegions();
   renderAll();
+  return true;
 }
 
 function renderCloudSync() {
@@ -233,12 +248,14 @@ function setupAuth() {
       return;
     }
     currentUser = data.user;
-    setAccountButton();
     modal.hidden = true;
     showToast("登入成功。正在载入线上资料…");
-    await loadCloudData();
+    const cloudDataLoaded = await loadCloudData();
+    setAccountButton();
     renderCloudSync();
-    showToast("线上资料已载入。");
+    if (cloudDataLoaded === true) showToast("线上资料已载入。");
+    else if (cloudDataLoaded === false) showToast("登入成功。这个帐号尚无线上资料。");
+    else showToast("登入成功，但线上资料暂时无法载入。");
   });
 
   document.getElementById("auth-signup").addEventListener("click", async () => {
@@ -267,30 +284,43 @@ function setupCloudImport() {
     }
     if (cloudSyncInProgress) return;
     const userId = currentUser.id;
+    const recordCount = Object.values(financeData.months).reduce((total, monthRegions) => (
+      total + ["taiwan", "malaysia"].reduce((countryTotal, country) => {
+        const region = monthRegions[country];
+        return countryTotal + region.assets.length + region.income.length + region.expenses.length
+          + region.personalExpenses.length + region.liabilities.length;
+      }, 0)
+    ), 0);
+    const monthlySettings = Object.entries(financeData.months).flatMap(([monthKey, monthRegions]) =>
+      ["taiwan", "malaysia"].map((country) => ({
+        user_id: userId,
+        month_key: monthKey,
+        country,
+        managed_amount: Number(monthRegions[country].managedAmount || 0),
+        note: monthRegions[country].note || null,
+      }))
+    );
+    const savingsGoals = ["taiwan", "malaysia"].map((country) => ({
+      user_id: userId,
+      country,
+      target_amount: Number(financeData.savingsGoals[country] || 0),
+    }));
+    const isFirstCloudImport = !localStorage.getItem(`personal-finance-cloud-imported-${userId}`);
+    const isAutomatic = automaticSync;
+    automaticSync = false;
+
+    if (isFirstCloudImport && !isAutomatic && !confirm(`即将把这台电脑目前的资料复制到：\n${currentUser.email}\n\n资产／收支／负债：${recordCount} 笔\n月份设定：${monthlySettings.length} 笔\n储蓄目标：${savingsGoals.length} 笔\n\n确定导入吗？`)) {
+      return;
+    }
+
     cloudSyncInProgress = true;
     const button = document.getElementById("import-local-data");
     const status = document.getElementById("cloud-sync-status");
-    const isAutomatic = automaticSync;
-    automaticSync = false;
     button.disabled = true;
     status.textContent = isAutomatic ? "正在自动同步…" : "正在安全同步资料…";
     try {
       makeDatabaseIds();
       const records = getCloudRecords(userId);
-      const monthlySettings = Object.entries(financeData.months).flatMap(([monthKey, monthRegions]) =>
-        ["taiwan", "malaysia"].map((country) => ({
-          user_id: userId,
-          month_key: monthKey,
-          country,
-          managed_amount: Number(monthRegions[country].managedAmount || 0),
-          note: monthRegions[country].note || null,
-        }))
-      );
-      const savingsGoals = ["taiwan", "malaysia"].map((country) => ({
-        user_id: userId,
-        country,
-        target_amount: Number(financeData.savingsGoals[country] || 0),
-      }));
       const recordsResult = records.length
         ? await supabaseClient.from("finance_records").upsert(records, { onConflict: "id" })
         : { error: null };
