@@ -21,6 +21,7 @@ let automaticSync = false;
 let cloudSyncInProgress = false;
 let pendingSignOut = false;
 let cloudSyncBaseline = null;
+let localChangeVersion = 0;
 
 function queueCloudSync() {
   if (pendingSignOut || !currentUser || !localStorage.getItem(`personal-finance-cloud-imported-${currentUser.id}`)) return;
@@ -488,6 +489,8 @@ function setupCloudImport() {
     if (isFirstCloudImport && !isAutomatic && !confirm(`即将把这台电脑目前的资料复制到：\n${currentUser.email}\n\n资产／收支／负债：${recordCount} 笔\n\n确定导入吗？`)) return;
 
     cloudSyncInProgress = true;
+    const syncStartChangeVersion = localChangeVersion;
+    let scheduleFollowUpSync = false;
     const button = document.getElementById("import-local-data");
     const status = document.getElementById("cloud-sync-status");
     button.disabled = true;
@@ -502,14 +505,23 @@ function setupCloudImport() {
       const savedCount = await writeCloudData(userId, merged, remote.data);
       const latest = await fetchCloudData(userId);
       cloudSyncBaseline = cloneCloudData(latest.data);
-      applyCloudData(latest.data);
+      if (localChangeVersion === syncStartChangeVersion) {
+        applyCloudData(latest.data);
+      } else {
+        scheduleFollowUpSync = true;
+        saveRegions(false);
+      }
       localStorage.setItem(`personal-finance-cloud-imported-${userId}`, "true");
       renderCloudSync();
       if (isAutomatic) {
         const syncedAt = new Date().toLocaleTimeString("zh-TW", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
-        status.textContent = conflicts.length ? `已同步，并处理 ${conflicts.length} 个冲突 · ${syncedAt}` : `已自动同步到线上 · ${syncedAt}`;
+        status.textContent = scheduleFollowUpSync
+          ? `同步期间有新修改，正在继续同步 · ${syncedAt}`
+          : conflicts.length ? `已同步，并处理 ${conflicts.length} 个冲突 · ${syncedAt}` : `已自动同步到线上 · ${syncedAt}`;
       } else {
-        alert(conflicts.length ? `同步完成：已处理 ${conflicts.length} 个冲突。` : `同步完成：${savedCount} 笔资料已安全保存到线上。`);
+        alert(scheduleFollowUpSync
+          ? "本次同步完成；同步期间的新修改会继续安全同步。"
+          : conflicts.length ? `同步完成：已处理 ${conflicts.length} 个冲突。` : `同步完成：${savedCount} 笔资料已安全保存到线上。`);
       }
     } catch (error) {
       status.textContent = "同步未完成，本机资料仍保留。";
@@ -518,6 +530,7 @@ function setupCloudImport() {
     } finally {
       cloudSyncInProgress = false;
       button.disabled = false;
+      if (scheduleFollowUpSync) queueCloudSync();
       if (pendingSignOut) await finishSignOut();
     }
   });
@@ -611,7 +624,10 @@ function loadFinanceData() {
 function saveRegions(queueSync = true) {
   try {
     localStorage.setItem(storageKey, JSON.stringify(financeData));
-    if (queueSync) queueCloudSync();
+    if (queueSync) {
+      localChangeVersion += 1;
+      queueCloudSync();
+    }
   } catch {
     // 浏览器不允许本机储存时，网页仍可继续使用当前画面。
   }
@@ -1599,7 +1615,8 @@ function renderRegion(id, region) {
   };
 
   const transactionRows = (items, label, className, type) =>
-    items
+    [...items]
+      .sort((first, second) => Number(second.amount) - Number(first.amount))
       .map(
         (item) =>
           `<div class="transaction-row example-row ${className}"><span>${label}：${escapeHtml(item.name)} — ${money(region.currency, item.amount)} ${renderTransactionChange(type, item.name)}</span><span class="row-actions"><button class="edit-button" data-edit-region="${id}" data-edit-collection="${type}" data-edit-id="${item.id}">修改</button></span></div>`
