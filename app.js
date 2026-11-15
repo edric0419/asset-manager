@@ -20,6 +20,7 @@ let cloudSyncTimer;
 let automaticSync = false;
 let cloudSyncInProgress = false;
 let pendingSignOut = false;
+let cloudSyncBaseline = null;
 
 function queueCloudSync() {
   if (pendingSignOut || !currentUser || !localStorage.getItem(`personal-finance-cloud-imported-${currentUser.id}`)) return;
@@ -35,9 +36,9 @@ function isUuid(value) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value || "");
 }
 
-function makeDatabaseIds() {
+function makeDatabaseIds(data = financeData) {
   const collections = ["assets", "income", "expenses", "personalExpenses", "liabilities"];
-  Object.values(financeData.months).forEach((monthRegions) => {
+  Object.values(data.months).forEach((monthRegions) => {
     ["taiwan", "malaysia"].forEach((country) => {
       const region = monthRegions[country];
       collections.forEach((collection) => {
@@ -47,10 +48,10 @@ function makeDatabaseIds() {
       });
     });
   });
-  saveRegions();
+  return data;
 }
 
-function getCloudRecords(userId) {
+function getCloudRecords(userId, data = financeData) {
   const typeMap = {
     assets: "asset",
     income: "income",
@@ -59,7 +60,7 @@ function getCloudRecords(userId) {
     liabilities: "liability",
   };
   const records = [];
-  Object.entries(financeData.months).forEach(([monthKey, monthRegions]) => {
+  Object.entries(data.months).forEach(([monthKey, monthRegions]) => {
     ["taiwan", "malaysia"].forEach((country) => {
       const region = monthRegions[country];
       Object.entries(typeMap).forEach(([collection, recordType]) => {
@@ -85,35 +86,11 @@ function getCloudRecords(userId) {
   return records;
 }
 
-async function loadCloudData() {
-  if (!currentUser) return null;
-  const userId = currentUser.id;
-  const [recordsResult, settingsResult, goalsResult] = await Promise.all([
-    supabaseClient.from("finance_records").select("*").eq("user_id", userId),
-    supabaseClient.from("monthly_settings").select("*").eq("user_id", userId),
-    supabaseClient.from("savings_goals").select("*").eq("user_id", userId),
-  ]);
-  const error = recordsResult.error || settingsResult.error || goalsResult.error;
-  if (error) {
-    showToast("无法读取线上资料，已保留目前画面。");
-    return null;
-  }
-  const records = recordsResult.data || [];
-  const settings = settingsResult.data || [];
-  const goals = goalsResult.data || [];
-  if (!records.length && !settings.length && !goals.length) {
-    const emptyData = createInitialFinanceData();
-    financeData.months = emptyData.months;
-    financeData.savingsGoals = emptyData.savingsGoals;
-    selectedMonth = emptyData.selectedMonth;
-    financeData.selectedMonth = selectedMonth;
-    regions = financeData.months[selectedMonth];
-    pickerYear = Number(selectedMonth.slice(0, 4));
-    localStorage.removeItem(`personal-finance-cloud-imported-${userId}`);
-    renderAll();
-    return false;
-  }
+function cloneCloudData(data) {
+  return structuredClone({ months: data.months || {}, savingsGoals: { ...defaultSavingsGoals, ...(data.savingsGoals || {}) } });
+}
 
+function createCloudData(records, settings, goals) {
   const months = {};
   const ensureMonth = (monthKey) => {
     if (!months[monthKey]) months[monthKey] = createEmptyRegions();
@@ -122,6 +99,7 @@ async function loadCloudData() {
   const collectionMap = { asset: "assets", income: "income", expense: "expenses", personal_expense: "personalExpenses", liability: "liabilities" };
   records.forEach((record) => {
     const region = ensureMonth(record.month_key)[record.country];
+    if (!region || !collectionMap[record.record_type]) return;
     region.currency = record.currency;
     region[collectionMap[record.record_type]].push({
       id: record.id, category: record.category || undefined, institution: record.institution || undefined,
@@ -131,18 +109,237 @@ async function loadCloudData() {
   });
   settings.forEach((setting) => {
     const region = ensureMonth(setting.month_key)[setting.country];
+    if (!region) return;
     region.managedAmount = Number(setting.managed_amount || 0);
     region.note = setting.note || "";
   });
-  financeData.months = months;
-  financeData.savingsGoals = { ...defaultSavingsGoals };
-  goals.forEach((goal) => { financeData.savingsGoals[goal.country] = Number(goal.target_amount || 0); });
-  if (!financeData.months[selectedMonth]) selectedMonth = Object.keys(financeData.months).sort().at(-1);
-  financeData.selectedMonth = selectedMonth;
-  localStorage.setItem(`personal-finance-cloud-imported-${userId}`, "true");
-  saveRegions();
+  const savingsGoals = { ...defaultSavingsGoals };
+  goals.forEach((goal) => { if (goal.country in savingsGoals) savingsGoals[goal.country] = Number(goal.target_amount || 0); });
+  return { months, savingsGoals };
+}
+
+async function fetchCloudData(userId) {
+  const [recordsResult, settingsResult, goalsResult] = await Promise.all([
+    supabaseClient.from("finance_records").select("*").eq("user_id", userId),
+    supabaseClient.from("monthly_settings").select("*").eq("user_id", userId),
+    supabaseClient.from("savings_goals").select("*").eq("user_id", userId),
+  ]);
+  const error = recordsResult.error || settingsResult.error || goalsResult.error;
+  if (error) throw error;
+  const records = recordsResult.data || [];
+  const settings = settingsResult.data || [];
+  const goals = goalsResult.data || [];
+  return {
+    data: createCloudData(records, settings, goals),
+    isEmpty: !records.length && !settings.length && !goals.length,
+  };
+}
+
+function applyCloudData(data) {
+  const months = structuredClone(data.months);
+  const availableMonths = Object.keys(months).sort();
+  if (!availableMonths.length) {
+    const emptyData = createInitialFinanceData();
+    financeData.months = emptyData.months;
+    financeData.savingsGoals = emptyData.savingsGoals;
+    selectedMonth = emptyData.selectedMonth;
+    financeData.selectedMonth = selectedMonth;
+    regions = financeData.months[selectedMonth];
+    pickerYear = Number(selectedMonth.slice(0, 4));
+  } else {
+    financeData.months = months;
+    financeData.savingsGoals = { ...defaultSavingsGoals, ...data.savingsGoals };
+    if (!financeData.months[selectedMonth]) selectedMonth = availableMonths.at(-1);
+    financeData.selectedMonth = selectedMonth;
+    regions = financeData.months[selectedMonth];
+    pickerYear = Number(selectedMonth.slice(0, 4));
+  }
+  saveRegions(false);
   renderAll();
-  return true;
+}
+
+async function loadCloudData() {
+  if (!currentUser) return null;
+  try {
+    const cloud = await fetchCloudData(currentUser.id);
+    cloudSyncBaseline = cloneCloudData(cloud.data);
+    applyCloudData(cloud.data);
+    if (cloud.isEmpty) {
+      localStorage.removeItem(`personal-finance-cloud-imported-${currentUser.id}`);
+      return false;
+    }
+    localStorage.setItem(`personal-finance-cloud-imported-${currentUser.id}`, "true");
+    return true;
+  } catch {
+    showToast("无法读取线上资料，已保留目前画面。");
+    return null;
+  }
+}
+
+const syncCollections = ["assets", "income", "expenses", "personalExpenses", "liabilities"];
+
+function normaliseRecord(collection, item) {
+  const base = { id: item.id, name: String(item.name || ""), amount: Number(item.amount || 0) };
+  return collection === "assets"
+    ? { ...base, category: item.category || "", institution: item.institution || "", ownership: item.ownership || "owned", note: item.note || "" }
+    : base;
+}
+
+function cloudEntities(data) {
+  const entities = new Map();
+  Object.entries(data.months).forEach(([monthKey, monthRegions]) => {
+    ["taiwan", "malaysia"].forEach((country) => {
+      const region = monthRegions[country];
+      if (!region) return;
+      syncCollections.forEach((collection) => {
+        (region[collection] || []).forEach((item) => {
+          const value = normaliseRecord(collection, item);
+          entities.set(`record:${item.id}`, { key: `record:${item.id}`, type: "record", monthKey, country, collection, value });
+        });
+      });
+      const settingKey = `setting:${monthKey}:${country}`;
+      entities.set(settingKey, {
+        key: settingKey, type: "setting", monthKey, country,
+        value: { managedAmount: Number(region.managedAmount || 0), note: String(region.note || "") },
+      });
+    });
+  });
+  ["taiwan", "malaysia"].forEach((country) => {
+    entities.set(`goal:${country}`, {
+      key: `goal:${country}`, type: "goal", country,
+      value: { targetAmount: Number(data.savingsGoals[country] || 0) },
+    });
+  });
+  return entities;
+}
+
+function sameSyncValue(first, second) {
+  return JSON.stringify(first ?? null) === JSON.stringify(second ?? null);
+}
+
+function ensureSyncRegion(data, monthKey, country) {
+  if (!data.months[monthKey]) data.months[monthKey] = createEmptyRegions();
+  return data.months[monthKey][country];
+}
+
+function applySyncEntity(data, template, value) {
+  if (template.type === "record") {
+    const region = ensureSyncRegion(data, template.monthKey, template.country);
+    const index = region[template.collection].findIndex((item) => item.id === template.value?.id);
+    if (value === null) {
+      if (index >= 0) region[template.collection].splice(index, 1);
+      return;
+    }
+    const next = structuredClone(value);
+    if (index >= 0) region[template.collection][index] = next;
+    else region[template.collection].push(next);
+    return;
+  }
+  if (template.type === "setting") {
+    const region = ensureSyncRegion(data, template.monthKey, template.country);
+    const next = value || { managedAmount: 0, note: "" };
+    region.managedAmount = Number(next.managedAmount || 0);
+    region.note = String(next.note || "");
+    return;
+  }
+  data.savingsGoals[template.country] = Number(value?.targetAmount || 0);
+}
+
+function syncEntityLabel(entity) {
+  const country = entity.country === "taiwan" ? "台湾" : "马来西亚";
+  if (entity.type === "record") {
+    const labels = { assets: "资产", income: "收入", expenses: "开销", personalExpenses: "个人开销", liabilities: "负债" };
+    return `${country} ${entity.monthKey} ${labels[entity.collection]}：${entity.value?.name || "已删除项目"}`;
+  }
+  return entity.type === "goal" ? `${country} 储蓄目标` : `${country} ${entity.monthKey} 月度备注／代管金额`;
+}
+
+function mergeCloudData(localData, remoteData) {
+  const baseline = cloudSyncBaseline || { months: {}, savingsGoals: { ...defaultSavingsGoals } };
+  const baseEntities = cloudEntities(baseline);
+  const localEntities = cloudEntities(localData);
+  const remoteEntities = cloudEntities(remoteData);
+  const keys = new Set([...baseEntities.keys(), ...localEntities.keys(), ...remoteEntities.keys()]);
+  const merged = cloneCloudData(remoteData);
+  const conflicts = [];
+
+  keys.forEach((key) => {
+    const base = baseEntities.get(key);
+    const local = localEntities.get(key);
+    const remote = remoteEntities.get(key);
+    const template = local || remote || base;
+    const localChanged = !sameSyncValue(local?.value, base?.value);
+    const remoteChanged = !sameSyncValue(remote?.value, base?.value);
+    if (!localChanged) return;
+    if (remoteChanged && !sameSyncValue(local?.value, remote?.value)) {
+      conflicts.push({ template, localValue: local?.value ?? null, remoteValue: remote?.value ?? null });
+      return;
+    }
+    applySyncEntity(merged, template, local?.value ?? null);
+  });
+  return { merged, conflicts };
+}
+
+function resolveCloudConflicts(merged, conflicts) {
+  conflicts.forEach((conflict, index) => {
+    const useLocal = confirm(`发现同步冲突（${index + 1}／${conflicts.length}）：\n${syncEntityLabel(conflict.template)}\n\n确定：保留这台装置的版本\n取消：保留线上版本`);
+    applySyncEntity(merged, conflict.template, useLocal ? conflict.localValue : conflict.remoteValue);
+  });
+}
+
+function getMonthlySettings(userId, data) {
+  return Object.entries(data.months).flatMap(([monthKey, monthRegions]) =>
+    ["taiwan", "malaysia"].map((country) => ({
+      user_id: userId, month_key: monthKey, country,
+      managed_amount: Number(monthRegions[country].managedAmount || 0),
+      note: monthRegions[country].note || null,
+    }))
+  );
+}
+
+function getSavingsGoals(userId, data) {
+  return ["taiwan", "malaysia"].map((country) => ({
+    user_id: userId, country, target_amount: Number(data.savingsGoals[country] || 0),
+  }));
+}
+
+async function writeCloudData(userId, data, remoteData) {
+  makeDatabaseIds(data);
+  const records = getCloudRecords(userId, data);
+  const recordsResult = records.length
+    ? await supabaseClient.from("finance_records").upsert(records, { onConflict: "id" })
+    : { error: null };
+  if (recordsResult.error) throw recordsResult.error;
+
+  const finalIds = new Set(records.map((record) => record.id));
+  const remoteIds = getCloudRecords(userId, remoteData).map((record) => record.id);
+  const removedIds = remoteIds.filter((id) => !finalIds.has(id));
+  if (removedIds.length) {
+    const { error } = await supabaseClient.from("finance_records").delete().eq("user_id", userId).in("id", removedIds);
+    if (error) throw error;
+  }
+
+  for (const setting of getMonthlySettings(userId, data)) {
+    const { data: existing, error: findError } = await supabaseClient
+      .from("monthly_settings").select("id").eq("user_id", userId)
+      .eq("month_key", setting.month_key).eq("country", setting.country).limit(1);
+    if (findError) throw findError;
+    const { error } = existing.length
+      ? await supabaseClient.from("monthly_settings").update(setting).eq("id", existing[0].id).eq("user_id", userId)
+      : await supabaseClient.from("monthly_settings").insert(setting);
+    if (error) throw error;
+  }
+
+  for (const goal of getSavingsGoals(userId, data)) {
+    const { data: existing, error: findError } = await supabaseClient
+      .from("savings_goals").select("id").eq("user_id", userId).eq("country", goal.country).limit(1);
+    if (findError) throw findError;
+    const { error } = existing.length
+      ? await supabaseClient.from("savings_goals").update(goal).eq("id", existing[0].id).eq("user_id", userId)
+      : await supabaseClient.from("savings_goals").insert(goal);
+    if (error) throw error;
+  }
+  return records.length;
 }
 
 function renderCloudSync() {
@@ -185,6 +382,7 @@ async function finishSignOut() {
     return;
   }
   currentUser = null;
+  cloudSyncBaseline = null;
   setAccountButton();
   renderCloudSync();
   showToast("已安全登出。");
@@ -192,8 +390,10 @@ async function finishSignOut() {
 
 async function refreshAccount() {
   if (!supabaseClient) return;
+  const previousUserId = currentUser?.id;
   const { data } = await supabaseClient.auth.getUser();
   currentUser = data.user || null;
+  if (!currentUser || currentUser.id !== previousUserId) cloudSyncBaseline = null;
   if (currentUser) await loadCloudData();
   setAccountButton();
   renderCloudSync();
@@ -278,40 +478,14 @@ function setupAuth() {
 
 function setupCloudImport() {
   document.getElementById("import-local-data").addEventListener("click", async () => {
-    if (!currentUser) {
-      alert("请先登入。");
-      return;
-    }
+    if (!currentUser) return alert("请先登入。");
     if (cloudSyncInProgress) return;
     const userId = currentUser.id;
-    const recordCount = Object.values(financeData.months).reduce((total, monthRegions) => (
-      total + ["taiwan", "malaysia"].reduce((countryTotal, country) => {
-        const region = monthRegions[country];
-        return countryTotal + region.assets.length + region.income.length + region.expenses.length
-          + region.personalExpenses.length + region.liabilities.length;
-      }, 0)
-    ), 0);
-    const monthlySettings = Object.entries(financeData.months).flatMap(([monthKey, monthRegions]) =>
-      ["taiwan", "malaysia"].map((country) => ({
-        user_id: userId,
-        month_key: monthKey,
-        country,
-        managed_amount: Number(monthRegions[country].managedAmount || 0),
-        note: monthRegions[country].note || null,
-      }))
-    );
-    const savingsGoals = ["taiwan", "malaysia"].map((country) => ({
-      user_id: userId,
-      country,
-      target_amount: Number(financeData.savingsGoals[country] || 0),
-    }));
     const isFirstCloudImport = !localStorage.getItem(`personal-finance-cloud-imported-${userId}`);
     const isAutomatic = automaticSync;
     automaticSync = false;
-
-    if (isFirstCloudImport && !isAutomatic && !confirm(`即将把这台电脑目前的资料复制到：\n${currentUser.email}\n\n资产／收支／负债：${recordCount} 笔\n月份设定：${monthlySettings.length} 笔\n储蓄目标：${savingsGoals.length} 笔\n\n确定导入吗？`)) {
-      return;
-    }
+    const recordCount = getCloudRecords(userId).length;
+    if (isFirstCloudImport && !isAutomatic && !confirm(`即将把这台电脑目前的资料复制到：\n${currentUser.email}\n\n资产／收支／负债：${recordCount} 笔\n\n确定导入吗？`)) return;
 
     cloudSyncInProgress = true;
     const button = document.getElementById("import-local-data");
@@ -319,68 +493,28 @@ function setupCloudImport() {
     button.disabled = true;
     status.textContent = isAutomatic ? "正在自动同步…" : "正在安全同步资料…";
     try {
-      makeDatabaseIds();
-      const records = getCloudRecords(userId);
-      const recordsResult = records.length
-        ? await supabaseClient.from("finance_records").upsert(records, { onConflict: "id" })
-        : { error: null };
-      if (recordsResult.error) throw recordsResult.error;
-
-      const { data: cloudRecords, error: cloudRecordsError } = await supabaseClient
-        .from("finance_records")
-        .select("id")
-        .eq("user_id", userId);
-      if (cloudRecordsError) throw cloudRecordsError;
-      const localIds = new Set(records.map((record) => record.id));
-      const removedIds = (cloudRecords || []).map((record) => record.id).filter((id) => !localIds.has(id));
-      if (removedIds.length) {
-        const { error: deleteError } = await supabaseClient
-          .from("finance_records")
-          .delete()
-          .eq("user_id", userId)
-          .in("id", removedIds);
-        if (deleteError) throw deleteError;
-      }
-
-      for (const setting of monthlySettings) {
-        const { data: existingSettings, error: findError } = await supabaseClient
-          .from("monthly_settings")
-          .select("id")
-          .eq("user_id", userId)
-          .eq("month_key", setting.month_key)
-          .eq("country", setting.country)
-          .limit(1);
-        if (findError) throw findError;
-        const settingsResult = existingSettings.length
-          ? await supabaseClient.from("monthly_settings").update(setting).eq("id", existingSettings[0].id).eq("user_id", userId)
-          : await supabaseClient.from("monthly_settings").insert(setting);
-        if (settingsResult.error) throw settingsResult.error;
-      }
-
-      for (const goal of savingsGoals) {
-        const { data: existingGoals, error: findError } = await supabaseClient
-          .from("savings_goals")
-          .select("id")
-          .eq("user_id", userId)
-          .eq("country", goal.country)
-          .limit(1);
-        if (findError) throw findError;
-        const goalsResult = existingGoals.length
-          ? await supabaseClient.from("savings_goals").update(goal).eq("id", existingGoals[0].id).eq("user_id", userId)
-          : await supabaseClient.from("savings_goals").insert(goal);
-        if (goalsResult.error) throw goalsResult.error;
-      }
+      const remote = await fetchCloudData(userId);
+      const local = cloneCloudData(financeData);
+      let merged = local;
+      let conflicts = [];
+      if (!isFirstCloudImport) ({ merged, conflicts } = mergeCloudData(local, remote.data));
+      if (conflicts.length) resolveCloudConflicts(merged, conflicts);
+      const savedCount = await writeCloudData(userId, merged, remote.data);
+      const latest = await fetchCloudData(userId);
+      cloudSyncBaseline = cloneCloudData(latest.data);
+      applyCloudData(latest.data);
       localStorage.setItem(`personal-finance-cloud-imported-${userId}`, "true");
       renderCloudSync();
       if (isAutomatic) {
         const syncedAt = new Date().toLocaleTimeString("zh-TW", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
-        status.textContent = `已自动同步到线上 · ${syncedAt}`;
+        status.textContent = conflicts.length ? `已同步，并处理 ${conflicts.length} 个冲突 · ${syncedAt}` : `已自动同步到线上 · ${syncedAt}`;
+      } else {
+        alert(conflicts.length ? `同步完成：已处理 ${conflicts.length} 个冲突。` : `同步完成：${savedCount} 笔资料已安全保存到线上。`);
       }
-      else alert(`同步完成：${records.length} 笔资料已安全保存到线上。`);
     } catch (error) {
-      status.textContent = "导入未完成，本机资料仍保留。";
+      status.textContent = "同步未完成，本机资料仍保留。";
       if (pendingSignOut) showToast("同步未完成，已保留本机资料。正在登出。");
-      else alert(`导入失败：${error.message || "请检查网络后再试。"}`);
+      else alert(`同步失败：${error.message || "请检查网络后再试。"}`);
     } finally {
       cloudSyncInProgress = false;
       button.disabled = false;
@@ -474,10 +608,10 @@ function loadFinanceData() {
   }
 }
 
-function saveRegions() {
+function saveRegions(queueSync = true) {
   try {
     localStorage.setItem(storageKey, JSON.stringify(financeData));
-    queueCloudSync();
+    if (queueSync) queueCloudSync();
   } catch {
     // 浏览器不允许本机储存时，网页仍可继续使用当前画面。
   }
@@ -1045,6 +1179,36 @@ function copyPreviousAssets() {
   saveRegions();
   renderAll();
   alert("已复制上个月资产资料。");
+}
+
+function copyPreviousTransactions() {
+  const previousMonth = getPreviousMonthKey();
+  const previousRegions = financeData.months[previousMonth];
+
+  if (!previousRegions) {
+    alert(`找不到 ${previousMonth.replace("-", " 年 ")} 月的资料，无法复制收支项目。`);
+    return;
+  }
+
+  if (!confirm(`会覆盖 ${selectedMonth.replace("-", " 年 ")} 月现有的 MYR 与 TWD 收入、开销与个人开销项目。\n复制后的金额都会设为 0。\n不会影响资产、负债或备注。确定继续吗？`)) {
+    return;
+  }
+
+  const transactionCollections = ["income", "expenses", "personalExpenses"];
+  const recordPrefix = { income: "income", expenses: "expense", personalExpenses: "personal-expense" };
+  ["malaysia", "taiwan"].forEach((country) => {
+    transactionCollections.forEach((collection) => {
+      regions[country][collection] = (previousRegions[country][collection] || []).map((item) => ({
+        id: createRecordId(recordPrefix[collection]),
+        name: item.name,
+        amount: 0,
+      }));
+    });
+  });
+
+  saveRegions();
+  renderAll();
+  alert("已复制上个月收支项目，金额已设为 0。");
 }
 
 function total(items) {
@@ -1697,7 +1861,7 @@ function bindEditButtons(id, region) {
         renderRegion(id, region);
       });
 
-      row.querySelector(".save-edit-button").addEventListener("click", () => {
+      const saveEdit = () => {
         const newName = row.querySelector(".inline-name-input").value.trim();
         const newAmount = Number(row.querySelector(".inline-amount-input").value);
 
@@ -1711,6 +1875,13 @@ function bindEditButtons(id, region) {
         if (collection === "assets") item.ownership = row.querySelector(".inline-ownership-select").value;
         saveRegions();
         renderAll();
+      };
+
+      row.querySelector(".save-edit-button").addEventListener("click", saveEdit);
+      row.querySelector(".inline-amount-input").addEventListener("keydown", (event) => {
+        if (event.key !== "Enter" || event.isComposing) return;
+        event.preventDefault();
+        saveEdit();
       });
 
       row.querySelector(".delete-edit-button").addEventListener("click", () => {
@@ -1791,6 +1962,7 @@ function renderAll() {
 document.getElementById("previous-month").addEventListener("click", () => shiftMonth(-1));
 document.getElementById("next-month").addEventListener("click", () => shiftMonth(1));
 document.getElementById("copy-previous-assets").addEventListener("click", copyPreviousAssets);
+document.getElementById("copy-previous-transactions").addEventListener("click", copyPreviousTransactions);
 document.getElementById("month-toggle").addEventListener("click", () => {
   const panel = document.getElementById("month-panel");
   panel.hidden = !panel.hidden;
