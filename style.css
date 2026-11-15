@@ -17,6 +17,19 @@ body {
   letter-spacing: 0.02em;
 }
 
+.app-version {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 3px 8px;
+  border: 1px solid rgba(255, 255, 255, 0.48);
+  border-radius: 999px;
+  color: #dbeafe;
+  font-size: 0.32em;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  vertical-align: middle;
+}
+
 .app-kicker {
   margin: 0;
   color: #bfdbfe;
