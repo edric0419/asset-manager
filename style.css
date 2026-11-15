@@ -2227,6 +2227,10 @@ body[data-active-tab="assets"] .country-section:has(#taiwan-summary) {
   border-radius: 8px;
 }
 
+.income-note-form {
+  margin-top: 16px;
+}
+
 .note-form textarea,
 .note-form button {
   padding: 10px;

@@ -1757,13 +1757,15 @@ function setupLiabilityPanel(id) {
   });
 }
 
-function setupNoteForm(id) {
-  const noteInput = document.getElementById(`${id}-note`);
-  const saveButton = document.getElementById(`${id}-save-note`);
+function setupNoteForm(id, context = "") {
+  const noteInput = document.getElementById(`${id}${context ? `-${context}` : ""}-note`);
+  const saveButton = document.getElementById(`${id}-save-${context ? `${context}-` : ""}note`);
 
   saveButton.addEventListener("click", () => {
     getCurrentRegions()[id].note = noteInput.value.trim();
     saveRegions();
+    document.getElementById(`${id}-note`).value = getCurrentRegions()[id].note;
+    document.getElementById(`${id}-income-note`).value = getCurrentRegions()[id].note;
     alert("本月备注已储存。");
   });
 }
@@ -1782,6 +1784,8 @@ function renderAll() {
   renderRegion("taiwan", regions.taiwan);
   document.getElementById("malaysia-note").value = regions.malaysia.note || "";
   document.getElementById("taiwan-note").value = regions.taiwan.note || "";
+  document.getElementById("malaysia-income-note").value = regions.malaysia.note || "";
+  document.getElementById("taiwan-income-note").value = regions.taiwan.note || "";
 }
 
 document.getElementById("previous-month").addEventListener("click", () => shiftMonth(-1));
@@ -1896,6 +1900,8 @@ setupLiabilityPanel("malaysia");
 setupLiabilityPanel("taiwan");
 setupNoteForm("malaysia");
 setupNoteForm("taiwan");
+setupNoteForm("malaysia", "income");
+setupNoteForm("taiwan", "income");
 setupAuth();
 setupCloudImport();
 refreshAccount();
