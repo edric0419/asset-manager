@@ -10,7 +10,7 @@
   <body>
     <header class="app-header">
       <p class="app-kicker">PERSONAL FINANCE</p>
-      <h1>个人财务月度管理 <span class="app-version" aria-label="目前版本">v1.1.0</span></h1>
+      <h1>个人财务月度管理 <span class="app-version" aria-label="目前版本">v2.0.0</span></h1>
       <p class="app-subtitle">按月整理 Malaysia（MYR）与 Taiwan（TWD）的资产、负债和收支</p>
     </header>
     <nav class="top-tabs" aria-label="主要功能">
@@ -154,7 +154,7 @@
           <option value="personalExpenses">个人开销</option>
         </select>
         <select id="malaysia-transaction-name" aria-label="Malaysia 项目名称"></select>
-        <input id="malaysia-transaction-amount" type="number" min="0" placeholder="金额（MYR）" />
+        <input id="malaysia-transaction-amount" type="text" inputmode="decimal" data-amount-input placeholder="金额（MYR）" />
         <button type="button" id="malaysia-add-transaction">新增收支</button>
         <button type="button" id="malaysia-add-another-transaction" class="add-another-transaction">再记一笔</button>
         <button type="button" class="close-transaction-form" data-transaction-form-region="malaysia">取消</button>
@@ -187,7 +187,7 @@
         </select>
         <input id="malaysia-institution" type="text" placeholder="机构／平台，例如 Maybank" />
         <input id="malaysia-name" type="text" placeholder="账户／资产名称，例如 Saving Account" />
-        <input id="malaysia-amount" type="number" min="0" placeholder="金额（MYR）" />
+        <input id="malaysia-amount" type="text" inputmode="decimal" data-amount-input placeholder="金额（MYR）" />
         <input id="malaysia-asset-note" type="text" placeholder="备注（可不填）" />
         <button type="button" id="malaysia-add-asset">新增资产</button>
         <button type="button" class="close-asset-form" data-asset-form-region="malaysia">取消</button>
@@ -208,7 +208,7 @@
       <div class="liability-form">
         <strong>新增马来西亚负债</strong>
         <input id="malaysia-liability-name" type="text" placeholder="债务名称" />
-        <input id="malaysia-liability-amount" type="number" min="0" placeholder="金额（MYR）" />
+        <input id="malaysia-liability-amount" type="text" inputmode="decimal" data-amount-input placeholder="金额（MYR）" />
         <button type="button" id="malaysia-add-liability">新增负债</button>
         <button type="button" class="close-liability-form" data-liability-form-region="malaysia">取消</button>
       </div>
@@ -244,7 +244,7 @@
           <option value="personalExpenses">个人开销</option>
         </select>
         <select id="taiwan-transaction-name" aria-label="Taiwan 项目名称"></select>
-        <input id="taiwan-transaction-amount" type="number" min="0" placeholder="金额（TWD）" />
+        <input id="taiwan-transaction-amount" type="text" inputmode="decimal" data-amount-input placeholder="金额（TWD）" />
         <button type="button" id="taiwan-add-transaction">新增收支</button>
         <button type="button" id="taiwan-add-another-transaction" class="add-another-transaction">再记一笔</button>
         <button type="button" class="close-transaction-form" data-transaction-form-region="taiwan">取消</button>
@@ -277,7 +277,7 @@
         </select>
         <input id="taiwan-institution" type="text" placeholder="机构／平台，例如 玉山银行" />
         <input id="taiwan-name" type="text" placeholder="账户／资产名称，例如 Saving Account" />
-        <input id="taiwan-amount" type="number" min="0" placeholder="金额（TWD）" />
+        <input id="taiwan-amount" type="text" inputmode="decimal" data-amount-input placeholder="金额（TWD）" />
         <input id="taiwan-asset-note" type="text" placeholder="备注（可不填）" />
         <button type="button" id="taiwan-add-asset">新增资产</button>
         <button type="button" class="close-asset-form" data-asset-form-region="taiwan">取消</button>
@@ -298,7 +298,7 @@
       <div class="liability-form">
         <strong>新增台湾负债</strong>
         <input id="taiwan-liability-name" type="text" placeholder="债务名称" />
-        <input id="taiwan-liability-amount" type="number" min="0" placeholder="金额（TWD）" />
+        <input id="taiwan-liability-amount" type="text" inputmode="decimal" data-amount-input placeholder="金额（TWD）" />
         <button type="button" id="taiwan-add-liability">新增负债</button>
         <button type="button" class="close-liability-form" data-liability-form-region="taiwan">取消</button>
       </div>
@@ -316,6 +316,36 @@
       </div>
     </section>
     </main>
+
+    <section class="amount-calculator" id="amount-calculator" hidden aria-label="金额计算机">
+      <div class="amount-calculator-screen" aria-live="polite">
+        <span id="amount-calculator-expression">0</span>
+        <strong id="amount-calculator-result">输入算式</strong>
+      </div>
+      <div class="amount-calculator-keys">
+        <button type="button" data-calculator-action="clear">C</button>
+        <button type="button" data-calculator-action="backspace" aria-label="删除一位">⌫</button>
+        <button type="button" data-calculator-value="(">(</button>
+        <button type="button" data-calculator-value=")">)</button>
+        <button type="button" data-calculator-value="7">7</button>
+        <button type="button" data-calculator-value="8">8</button>
+        <button type="button" data-calculator-value="9">9</button>
+        <button type="button" data-calculator-value="÷" class="calculator-operator">÷</button>
+        <button type="button" data-calculator-value="4">4</button>
+        <button type="button" data-calculator-value="5">5</button>
+        <button type="button" data-calculator-value="6">6</button>
+        <button type="button" data-calculator-value="×" class="calculator-operator">×</button>
+        <button type="button" data-calculator-value="1">1</button>
+        <button type="button" data-calculator-value="2">2</button>
+        <button type="button" data-calculator-value="3">3</button>
+        <button type="button" data-calculator-value="-" class="calculator-operator">−</button>
+        <button type="button" data-calculator-value="0">0</button>
+        <button type="button" data-calculator-value=".">.</button>
+        <button type="button" data-calculator-value="+" class="calculator-operator">+</button>
+        <button type="button" data-calculator-action="equals" class="calculator-equals">＝</button>
+      </div>
+      <button type="button" class="amount-calculator-cancel" data-calculator-action="cancel">取消</button>
+    </section>
 
     <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>

@@ -16,6 +16,193 @@ function showToast(message) {
     toast.hidden = true;
   }, 3000);
 }
+
+let activeAmountCalculatorInput = null;
+let amountCalculatorOriginalValue = "";
+
+function isAmountCalculatorInput(element) {
+  return element instanceof HTMLInputElement && element.matches(
+    "[data-amount-input], .inline-amount-input, #credit-card-bill-amount, .savings-goal-edit-form input"
+  );
+}
+
+function evaluateAmountExpression(rawExpression) {
+  const source = String(rawExpression || "").trim().replace(/[×xX]/g, "*").replace(/÷/g, "/");
+  if (!source) throw new Error("请输入算式。");
+  if (!/^[0-9+\-*/().\s]+$/.test(source)) throw new Error("只可使用数字、括号与四则运算。");
+
+  let index = 0;
+  const skipSpaces = () => { while (/\s/.test(source[index] || "")) index += 1; };
+  const parseFactor = () => {
+    skipSpaces();
+    if (source[index] === "+" || source[index] === "-") {
+      const operator = source[index++];
+      const value = parseFactor();
+      return operator === "-" ? -value : value;
+    }
+    if (source[index] === "(") {
+      index += 1;
+      const value = parseExpression();
+      skipSpaces();
+      if (source[index] !== ")") throw new Error("括号未完成。");
+      index += 1;
+      return value;
+    }
+    const match = source.slice(index).match(/^(?:\d+(?:\.\d*)?|\.\d+)/);
+    if (!match) throw new Error("算式格式不正确。");
+    index += match[0].length;
+    return Number(match[0]);
+  };
+  const parseTerm = () => {
+    let value = parseFactor();
+    while (true) {
+      skipSpaces();
+      const operator = source[index];
+      if (operator !== "*" && operator !== "/") break;
+      index += 1;
+      const next = parseFactor();
+      if (operator === "/" && next === 0) throw new Error("不可除以 0。");
+      value = operator === "*" ? value * next : value / next;
+    }
+    return value;
+  };
+  const parseExpression = () => {
+    let value = parseTerm();
+    while (true) {
+      skipSpaces();
+      const operator = source[index];
+      if (operator !== "+" && operator !== "-") break;
+      index += 1;
+      const next = parseTerm();
+      value = operator === "+" ? value + next : value - next;
+    }
+    return value;
+  };
+
+  const result = parseExpression();
+  skipSpaces();
+  if (index !== source.length) throw new Error("算式格式不正确。");
+  if (!Number.isFinite(result)) throw new Error("计算结果无效。");
+  if (result < 0) throw new Error("金额不可小于 0。");
+  return result;
+}
+
+function formatCalculatedAmount(value) {
+  const rounded = Number(Number(value).toFixed(10));
+  return Object.is(rounded, -0) ? "0" : String(rounded);
+}
+
+function updateAmountCalculator() {
+  if (!activeAmountCalculatorInput) return;
+  const expression = activeAmountCalculatorInput.value.trim();
+  const expressionElement = document.getElementById("amount-calculator-expression");
+  const resultElement = document.getElementById("amount-calculator-result");
+  expressionElement.textContent = expression || "0";
+  if (!expression) {
+    resultElement.textContent = "输入算式";
+    activeAmountCalculatorInput.removeAttribute("aria-invalid");
+    return;
+  }
+  try {
+    resultElement.textContent = "＝ " + formatCalculatedAmount(evaluateAmountExpression(expression));
+    activeAmountCalculatorInput.removeAttribute("aria-invalid");
+  } catch (error) {
+    resultElement.textContent = error.message;
+    activeAmountCalculatorInput.setAttribute("aria-invalid", "true");
+  }
+}
+
+function positionAmountCalculator() {
+  if (!activeAmountCalculatorInput) return;
+  const calculator = document.getElementById("amount-calculator");
+  const rect = activeAmountCalculatorInput.getBoundingClientRect();
+  const margin = 12;
+  const width = Math.min(328, window.innerWidth - margin * 2);
+  const left = Math.max(margin, Math.min(rect.left, window.innerWidth - width - margin));
+  calculator.style.width = width + "px";
+  calculator.style.left = left + "px";
+  calculator.style.top = Math.min(window.innerHeight - calculator.offsetHeight - margin, Math.max(margin, rect.bottom + 8)) + "px";
+  if (calculator.getBoundingClientRect().bottom > window.innerHeight - margin && rect.top > calculator.offsetHeight + margin) {
+    calculator.style.top = Math.max(margin, rect.top - calculator.offsetHeight - 8) + "px";
+  }
+}
+
+function closeAmountCalculator(restoreOriginalValue = false) {
+  if (restoreOriginalValue && activeAmountCalculatorInput?.isConnected) {
+    activeAmountCalculatorInput.value = amountCalculatorOriginalValue;
+    activeAmountCalculatorInput.removeAttribute("aria-invalid");
+  }
+  activeAmountCalculatorInput?.classList.remove("is-calculator-active");
+  activeAmountCalculatorInput = null;
+  document.getElementById("amount-calculator").hidden = true;
+}
+
+function openAmountCalculator(input) {
+  if (activeAmountCalculatorInput === input) return;
+  closeAmountCalculator(false);
+  activeAmountCalculatorInput = input;
+  amountCalculatorOriginalValue = input.value;
+  input.classList.add("is-calculator-active");
+  const calculator = document.getElementById("amount-calculator");
+  calculator.hidden = false;
+  updateAmountCalculator();
+  requestAnimationFrame(positionAmountCalculator);
+}
+
+function applyAmountCalculator() {
+  if (!activeAmountCalculatorInput) return;
+  try {
+    const value = formatCalculatedAmount(evaluateAmountExpression(activeAmountCalculatorInput.value));
+    const input = activeAmountCalculatorInput;
+    input.value = value;
+    input.removeAttribute("aria-invalid");
+    closeAmountCalculator(false);
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  } catch (error) {
+    document.getElementById("amount-calculator-result").textContent = error.message;
+    activeAmountCalculatorInput.setAttribute("aria-invalid", "true");
+  }
+}
+
+function setupAmountCalculator() {
+  const calculator = document.getElementById("amount-calculator");
+  document.addEventListener("focusin", (event) => {
+    if (isAmountCalculatorInput(event.target) && !event.target.readOnly && !event.target.disabled) openAmountCalculator(event.target);
+  });
+  document.addEventListener("input", (event) => {
+    if (event.target === activeAmountCalculatorInput) updateAmountCalculator();
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.target !== activeAmountCalculatorInput || event.isComposing) return;
+    if (event.key === "Enter" || event.key === "=") {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      applyAmountCalculator();
+    } else if (event.key === "Escape") {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      closeAmountCalculator(true);
+    }
+  }, true);
+  document.addEventListener("pointerdown", (event) => {
+    if (!activeAmountCalculatorInput || calculator.contains(event.target) || event.target === activeAmountCalculatorInput) return;
+    closeAmountCalculator(true);
+  });
+  calculator.addEventListener("click", (event) => {
+    const button = event.target.closest("button");
+    if (!button || !activeAmountCalculatorInput) return;
+    const action = button.dataset.calculatorAction;
+    if (action === "cancel") return closeAmountCalculator(true);
+    if (action === "clear") activeAmountCalculatorInput.value = "";
+    else if (action === "backspace") activeAmountCalculatorInput.value = activeAmountCalculatorInput.value.slice(0, -1);
+    else if (action === "equals") return applyAmountCalculator();
+    else activeAmountCalculatorInput.value += button.dataset.calculatorValue || "";
+    updateAmountCalculator();
+    activeAmountCalculatorInput.focus({ preventScroll: true });
+  });
+  window.addEventListener("resize", positionAmountCalculator);
+  window.addEventListener("scroll", positionAmountCalculator, true);
+}
 let cloudSyncTimer;
 let automaticSync = false;
 let cloudSyncInProgress = false;
@@ -1564,7 +1751,7 @@ function renderSavingsGoals() {
       const region = regions[id];
       const target = button.closest(".savings-goal-region");
       target.innerHTML = `<div class="savings-goal-region-heading"><span>${labels[id]} 储蓄目标</span></div>
-        <div class="savings-goal-edit-form"><span>${region.currency}</span><input type="number" min="0" step="0.01" aria-label="${labels[id]}储蓄目标" value="${Number(financeData.savingsGoals[id]) || ""}" placeholder="输入目标金额"><button type="button" class="savings-goal-save">储存</button><button type="button" class="savings-goal-cancel">取消</button></div>
+        <div class="savings-goal-edit-form"><span>${region.currency}</span><input type="text" inputmode="decimal" data-amount-input aria-label="${labels[id]}储蓄目标" value="${Number(financeData.savingsGoals[id]) || ""}" placeholder="输入目标金额"><button type="button" class="savings-goal-save">储存</button><button type="button" class="savings-goal-cancel">取消</button></div>
         <p>输入 0 可清除这个目标。</p>`;
       target.querySelector(".savings-goal-cancel").addEventListener("click", renderSavingsGoals);
       target.querySelector(".savings-goal-save").addEventListener("click", () => {
@@ -2077,7 +2264,7 @@ function bindEditButtons(id, region) {
         : `<input class="inline-name-input" type="text" aria-label="修改名称" placeholder="名称" />`;
       row.innerHTML = `
         ${nameField}
-        <input class="inline-amount-input" type="number" min="0" aria-label="修改金额" placeholder="金额" />
+        <input class="inline-amount-input" type="text" inputmode="decimal" data-amount-input aria-label="修改金额" placeholder="金额" />
         ${ownershipField}
         <span class="row-actions">
           <button class="save-edit-button" type="button">储存</button>
@@ -2241,7 +2428,7 @@ function renderCreditCard() {
   const openBills = card.bills.filter((bill) => bill.status === "open").sort((first, second) => first.statementMonth.localeCompare(second.statementMonth));
   cardSection.innerHTML = `<div class="credit-card-heading"><div><h3>信用卡账单</h3><p>${escapeHtml(card.setting.cardName)} · 每月 ${card.setting.statementDay} 日结账／${card.setting.recordDay} 日登记／${card.setting.paymentDay} 日付款</p></div><button type="button" id="credit-card-change-settings">设定</button></div>
     <p class="credit-card-payment-account">默认付款账户：${paymentAsset ? escapeHtml(paymentAsset.institution ? `${paymentAsset.institution} ${paymentAsset.name}` : paymentAsset.name) : "未找到付款账户"}</p>
-    ${currentBill ? `<div class="credit-card-bill"><span>${escapeHtml(selectedMonth)} 已结账账单</span><strong>${money("NT$", currentBill.amount)}</strong><b class="${currentBill.status === "paid" ? "credit-card-paid" : "credit-card-open"}">${currentBill.status === "paid" ? "已付款" : "待付款"}</b>${currentBill.status === "open" ? `<button type="button" class="credit-card-pay" data-credit-card-bill-id="${currentBill.id}">标记已付款</button>` : ""}</div>` : `<div class="credit-card-form"><input id="credit-card-bill-amount" type="number" min="0" step="0.01" placeholder="输入 ${selectedMonth} 已结账账单总额（NT$）"><button type="button" id="credit-card-register-bill">登记已结账账单</button></div>`}
+    ${currentBill ? `<div class="credit-card-bill"><span>${escapeHtml(selectedMonth)} 已结账账单</span><strong>${money("NT$", currentBill.amount)}</strong><b class="${currentBill.status === "paid" ? "credit-card-paid" : "credit-card-open"}">${currentBill.status === "paid" ? "已付款" : "待付款"}</b>${currentBill.status === "open" ? `<button type="button" class="credit-card-pay" data-credit-card-bill-id="${currentBill.id}">标记已付款</button>` : ""}</div>` : `<div class="credit-card-form"><input id="credit-card-bill-amount" type="text" inputmode="decimal" data-amount-input placeholder="输入 ${selectedMonth} 已结账账单总额（NT$）"><button type="button" id="credit-card-register-bill">登记已结账账单</button></div>`}
     ${openBills.filter((bill) => bill.statementMonth !== selectedMonth).length ? `<div class="credit-card-open-list"><span>其他待付款账单</span>${openBills.filter((bill) => bill.statementMonth !== selectedMonth).map((bill) => `<p>${escapeHtml(bill.statementMonth)} · ${money("NT$", bill.amount)}</p>`).join("")}</div>` : ""}`;
 
   document.getElementById("credit-card-change-settings").addEventListener("click", () => {
@@ -2283,6 +2470,7 @@ function renderCreditCard() {
 }
 
 function renderAll() {
+  closeAmountCalculator(false);
   regions = getCurrentRegions();
   renderMonthPicker();
   renderDashboard();
@@ -2397,6 +2585,7 @@ document.getElementById("theme-toggle").addEventListener("click", () => {
   setTheme(document.body.classList.contains("dark-mode") ? "light" : "dark");
 });
 
+setupAmountCalculator();
 renderAll();
 setActiveTab(loadActiveTab());
 setTheme(loadTheme());
