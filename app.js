@@ -22,6 +22,8 @@ let cloudSyncInProgress = false;
 let pendingSignOut = false;
 let cloudSyncBaseline = null;
 let localChangeVersion = 0;
+let creditCardSchemaReady = true;
+let creditCardSettingsEditing = false;
 
 function queueCloudSync() {
   if (pendingSignOut || !currentUser || !localStorage.getItem(`personal-finance-cloud-imported-${currentUser.id}`)) return;
@@ -87,11 +89,99 @@ function getCloudRecords(userId, data = financeData) {
   return records;
 }
 
-function cloneCloudData(data) {
-  return structuredClone({ months: data.months || {}, savingsGoals: { ...defaultSavingsGoals, ...(data.savingsGoals || {}) } });
+function defaultCreditCardData() {
+  return { setting: null, bills: [] };
 }
 
-function createCloudData(records, settings, goals) {
+function creditCardLiabilityName(setting, statementMonth) {
+  return `${setting?.cardName || "信用卡"} 待付款（${statementMonth}）`;
+}
+
+// A card bill and its liability are one logical record. Older local data could
+// contain duplicate liabilities when a database write failed after the
+// liability had already been saved. Keep one, repair its link, and remove only
+// the card-generated duplicates.
+function normaliseCreditCardData(data = financeData) {
+  data.creditCard = data.creditCard || defaultCreditCardData();
+  const card = data.creditCard;
+  card.bills = Array.isArray(card.bills) ? card.bills : [];
+  let changed = false;
+  const seenMonths = new Set();
+  const uniqueBills = [];
+
+  card.bills.forEach((bill) => {
+    const key = `${bill.country || "taiwan"}:${bill.statementMonth || ""}`;
+    if (!bill.statementMonth || seenMonths.has(key)) {
+      changed = true;
+      return;
+    }
+    seenMonths.add(key);
+    uniqueBills.push(bill);
+  });
+  if (uniqueBills.length !== card.bills.length) card.bills = uniqueBills;
+  if (!card.setting) return changed;
+
+  card.bills.forEach((bill) => {
+    if ((bill.country || "taiwan") !== "taiwan") return;
+    if (!data.months[bill.statementMonth]) {
+      data.months[bill.statementMonth] = createEmptyRegions();
+      changed = true;
+    }
+    const liabilities = data.months[bill.statementMonth].taiwan.liabilities;
+    const expectedName = creditCardLiabilityName(card.setting, bill.statementMonth);
+    const linked = liabilities.find((item) => item.id === bill.liabilityRecordId);
+    const sameName = liabilities.filter((item) => item.name === expectedName);
+
+    if (bill.status === "paid") {
+      const remaining = liabilities.filter((item) => item.id !== bill.liabilityRecordId && item.name !== expectedName);
+      if (remaining.length !== liabilities.length) {
+        data.months[bill.statementMonth].taiwan.liabilities = remaining;
+        changed = true;
+      }
+      return;
+    }
+
+    let primary = linked || sameName[0];
+    if (!primary) {
+      primary = {
+        id: bill.liabilityRecordId || globalThis.crypto.randomUUID(),
+        name: expectedName,
+        amount: Number(bill.amount),
+      };
+      liabilities.push(primary);
+      changed = true;
+    }
+    if (bill.liabilityRecordId !== primary.id) {
+      bill.liabilityRecordId = primary.id;
+      changed = true;
+    }
+    if (primary.name !== expectedName || Number(primary.amount) !== Number(bill.amount)) {
+      primary.name = expectedName;
+      primary.amount = Number(bill.amount);
+      changed = true;
+    }
+    const remaining = liabilities.filter((item) => item === primary || item.name !== expectedName);
+    if (remaining.length !== liabilities.length) {
+      data.months[bill.statementMonth].taiwan.liabilities = remaining;
+      changed = true;
+    }
+  });
+  return changed;
+}
+
+function creditCardBillForLiability(recordId) {
+  return (financeData.creditCard?.bills || []).find((bill) => bill.liabilityRecordId === recordId && bill.status === "open") || null;
+}
+
+function cloneCloudData(data) {
+  return structuredClone({
+    months: data.months || {},
+    savingsGoals: { ...defaultSavingsGoals, ...(data.savingsGoals || {}) },
+    creditCard: { ...defaultCreditCardData(), ...(data.creditCard || {}) },
+  });
+}
+
+function createCloudData(records, settings, goals, cardSetting, cardBills) {
   const months = {};
   const ensureMonth = (monthKey) => {
     if (!months[monthKey]) months[monthKey] = createEmptyRegions();
@@ -116,23 +206,64 @@ function createCloudData(records, settings, goals) {
   });
   const savingsGoals = { ...defaultSavingsGoals };
   goals.forEach((goal) => { if (goal.country in savingsGoals) savingsGoals[goal.country] = Number(goal.target_amount || 0); });
-  return { months, savingsGoals };
+  return {
+    months,
+    savingsGoals,
+    creditCard: {
+      setting: cardSetting ? {
+        cardName: cardSetting.card_name,
+        country: cardSetting.country,
+        statementDay: Number(cardSetting.statement_day),
+        recordDay: Number(cardSetting.record_day),
+        paymentDay: Number(cardSetting.payment_day),
+        paymentAssetId: cardSetting.payment_asset_id || "",
+      } : null,
+      bills: cardBills.map((bill) => ({
+        id: bill.id,
+        country: bill.country,
+        statementMonth: bill.statement_month,
+        amount: Number(bill.amount),
+        status: bill.status,
+        liabilityRecordId: bill.liability_record_id,
+        paymentAssetId: bill.payment_asset_id || "",
+        paidAt: bill.paid_at || null,
+      })),
+    },
+  };
+}
+
+function isMissingCreditCardSchema(error) {
+  return ["PGRST205", "42P01"].includes(error?.code);
+}
+
+function isInvalidCreditCardMonthRule(error) {
+  return error?.code === "23514" && (
+    error?.constraint === "credit_card_bills_statement_month_check" ||
+    String(error?.message || "").includes("credit_card_bills_statement_month_check")
+  );
 }
 
 async function fetchCloudData(userId) {
-  const [recordsResult, settingsResult, goalsResult] = await Promise.all([
+  const [recordsResult, settingsResult, goalsResult, cardSettingResult, cardBillsResult] = await Promise.all([
     supabaseClient.from("finance_records").select("*").eq("user_id", userId),
     supabaseClient.from("monthly_settings").select("*").eq("user_id", userId),
     supabaseClient.from("savings_goals").select("*").eq("user_id", userId),
+    supabaseClient.from("credit_card_settings").select("*").eq("user_id", userId).maybeSingle(),
+    supabaseClient.from("credit_card_bills").select("*").eq("user_id", userId),
   ]);
   const error = recordsResult.error || settingsResult.error || goalsResult.error;
   if (error) throw error;
   const records = recordsResult.data || [];
   const settings = settingsResult.data || [];
   const goals = goalsResult.data || [];
+  const cardError = cardSettingResult.error || cardBillsResult.error;
+  if (cardError && !isMissingCreditCardSchema(cardError)) throw cardError;
+  creditCardSchemaReady = !cardError;
+  const cardSetting = cardError ? null : cardSettingResult.data;
+  const cardBills = cardError ? [] : cardBillsResult.data || [];
   return {
-    data: createCloudData(records, settings, goals),
-    isEmpty: !records.length && !settings.length && !goals.length,
+    data: createCloudData(records, settings, goals, cardSetting, cardBills),
+    isEmpty: !records.length && !settings.length && !goals.length && !cardSetting && !cardBills.length,
   };
 }
 
@@ -143,6 +274,7 @@ function applyCloudData(data) {
     const emptyData = createInitialFinanceData();
     financeData.months = emptyData.months;
     financeData.savingsGoals = emptyData.savingsGoals;
+    financeData.creditCard = emptyData.creditCard;
     selectedMonth = emptyData.selectedMonth;
     financeData.selectedMonth = selectedMonth;
     regions = financeData.months[selectedMonth];
@@ -150,6 +282,7 @@ function applyCloudData(data) {
   } else {
     financeData.months = months;
     financeData.savingsGoals = { ...defaultSavingsGoals, ...data.savingsGoals };
+    financeData.creditCard = structuredClone(data.creditCard || defaultCreditCardData());
     if (!financeData.months[selectedMonth]) selectedMonth = availableMonths.at(-1);
     financeData.selectedMonth = selectedMonth;
     regions = financeData.months[selectedMonth];
@@ -211,6 +344,30 @@ function cloudEntities(data) {
       value: { targetAmount: Number(data.savingsGoals[country] || 0) },
     });
   });
+  const creditCard = data.creditCard || defaultCreditCardData();
+  if (creditCard.setting) {
+    entities.set("credit-card-setting", {
+      key: "credit-card-setting", type: "creditCardSetting",
+      value: {
+        cardName: String(creditCard.setting.cardName || "信用卡"),
+        country: "taiwan",
+        statementDay: Number(creditCard.setting.statementDay || 3),
+        recordDay: Number(creditCard.setting.recordDay || 14),
+        paymentDay: Number(creditCard.setting.paymentDay || 18),
+        paymentAssetId: creditCard.setting.paymentAssetId || "",
+      },
+    });
+  }
+  (creditCard.bills || []).forEach((bill) => {
+    entities.set(`credit-card-bill:${bill.id}`, {
+      key: `credit-card-bill:${bill.id}`, type: "creditCardBill",
+      value: {
+        id: bill.id, country: "taiwan", statementMonth: bill.statementMonth,
+        amount: Number(bill.amount || 0), status: bill.status,
+        liabilityRecordId: bill.liabilityRecordId, paymentAssetId: bill.paymentAssetId || "", paidAt: bill.paidAt || null,
+      },
+    });
+  });
   return entities;
 }
 
@@ -243,6 +400,20 @@ function applySyncEntity(data, template, value) {
     region.note = String(next.note || "");
     return;
   }
+  if (template.type === "creditCardSetting") {
+    data.creditCard = data.creditCard || defaultCreditCardData();
+    data.creditCard.setting = value ? structuredClone(value) : null;
+    return;
+  }
+  if (template.type === "creditCardBill") {
+    data.creditCard = data.creditCard || defaultCreditCardData();
+    const index = data.creditCard.bills.findIndex((bill) => bill.id === template.value?.id);
+    if (value === null) {
+      if (index >= 0) data.creditCard.bills.splice(index, 1);
+    } else if (index >= 0) data.creditCard.bills[index] = structuredClone(value);
+    else data.creditCard.bills.push(structuredClone(value));
+    return;
+  }
   data.savingsGoals[template.country] = Number(value?.targetAmount || 0);
 }
 
@@ -252,6 +423,8 @@ function syncEntityLabel(entity) {
     const labels = { assets: "资产", income: "收入", expenses: "开销", personalExpenses: "个人开销", liabilities: "负债" };
     return `${country} ${entity.monthKey} ${labels[entity.collection]}：${entity.value?.name || "已删除项目"}`;
   }
+  if (entity.type === "creditCardSetting") return "台湾信用卡设定";
+  if (entity.type === "creditCardBill") return `台湾信用卡账单：${entity.value?.statementMonth || ""}`;
   return entity.type === "goal" ? `${country} 储蓄目标` : `${country} ${entity.monthKey} 月度备注／代管金额`;
 }
 
@@ -305,6 +478,34 @@ function getSavingsGoals(userId, data) {
 }
 
 async function writeCloudData(userId, data, remoteData) {
+  normaliseCreditCardData(data);
+  // Write the card bill first. If the database migration is missing or invalid,
+  // do not save the matching liability on its own and create an orphan.
+  if (creditCardSchemaReady) {
+    const card = data.creditCard || defaultCreditCardData();
+    if (card.setting) {
+      const { error } = await supabaseClient.from("credit_card_settings").upsert({
+        user_id: userId,
+        card_name: card.setting.cardName,
+        country: "taiwan",
+        statement_day: Number(card.setting.statementDay || 3),
+        record_day: Number(card.setting.recordDay || 14),
+        payment_day: Number(card.setting.paymentDay || 18),
+        payment_asset_id: card.setting.paymentAssetId || null,
+        updated_at: new Date().toISOString(),
+      }, { onConflict: "user_id" });
+      if (error) throw error;
+    }
+    if (card.bills.length) {
+      const { error } = await supabaseClient.from("credit_card_bills").upsert(card.bills.map((bill) => ({
+        id: bill.id, user_id: userId, country: "taiwan", statement_month: bill.statementMonth,
+        amount: Number(bill.amount), status: bill.status, liability_record_id: bill.liabilityRecordId,
+        payment_asset_id: bill.paymentAssetId || null, paid_at: bill.paidAt || null,
+      })), { onConflict: "user_id,statement_month" });
+      if (error) throw error;
+    }
+  }
+
   makeDatabaseIds(data);
   const records = getCloudRecords(userId, data);
   const recordsResult = records.length
@@ -526,7 +727,11 @@ function setupCloudImport() {
     } catch (error) {
       status.textContent = "同步未完成，本机资料仍保留。";
       if (pendingSignOut) showToast("同步未完成，已保留本机资料。正在登出。");
-      else alert(`同步失败：${error.message || "请检查网络后再试。"}`);
+      else if (isInvalidCreditCardMonthRule(error)) {
+        creditCardSchemaReady = false;
+        renderAll();
+        alert("信用卡资料表仍在使用旧的月份检查规则。请在 Supabase SQL Editor 重新执行 supabase-credit-card-setup.sql，再重新整理网页。");
+      } else alert(`同步失败：${error.message || "请检查网络后再试。"}`);
     } finally {
       cloudSyncInProgress = false;
       button.disabled = false;
@@ -600,6 +805,7 @@ function createInitialFinanceData() {
     selectedMonth: currentMonth,
     months: { [currentMonth]: createEmptyRegions() },
     savingsGoals: { ...defaultSavingsGoals },
+    creditCard: defaultCreditCardData(),
   };
 }
 
@@ -640,6 +846,7 @@ function downloadBackup() {
     selectedMonth: financeData.selectedMonth,
     months: financeData.months,
     savingsGoals: financeData.savingsGoals,
+    creditCard: financeData.creditCard,
   };
   const backupFile = new Blob([JSON.stringify(backup, null, 2)], { type: "application/json" });
   const downloadUrl = URL.createObjectURL(backupFile);
@@ -1062,6 +1269,7 @@ function restoreBackup(file) {
       const availableMonths = Object.keys(backup.months);
       financeData.months = backup.months;
       financeData.savingsGoals = { ...defaultSavingsGoals, ...(backup.savingsGoals || {}) };
+      financeData.creditCard = structuredClone(backup.creditCard || defaultCreditCardData());
       selectedMonth = backup.selectedMonth && backup.months[backup.selectedMonth]
         ? backup.selectedMonth
         : availableMonths[0];
@@ -1085,6 +1293,10 @@ let pickerYear = Number(selectedMonth.slice(0, 4));
 let selectedTrendRegion = "taiwan";
 
 let migratedLocalData = false;
+if (!financeData.creditCard || !Array.isArray(financeData.creditCard.bills)) {
+  financeData.creditCard = defaultCreditCardData();
+  migratedLocalData = true;
+}
 Object.values(financeData.months).forEach((monthRegions) => {
   Object.values(monthRegions).forEach((region) => {
     if ("previousMonthExpense" in region) {
@@ -1850,6 +2062,9 @@ function bindEditButtons(id, region) {
         renderAll();
         return;
       }
+      const creditCardBill = id === "taiwan" && collection === "liabilities"
+        ? creditCardBillForLiability(recordId)
+        : null;
       const row = button.closest(".asset-row, .liability-row, .transaction-row");
       row.classList.add("is-editing");
       row.classList.toggle("asset-editing", collection === "assets");
@@ -1872,6 +2087,10 @@ function bindEditButtons(id, region) {
       `;
       row.querySelector(".inline-name-input").value = item.name;
       row.querySelector(".inline-amount-input").value = item.amount;
+      if (creditCardBill) {
+        row.querySelector(".inline-name-input").readOnly = true;
+        row.querySelector(".inline-name-input").title = "信用卡账单名称由信用卡设定管理";
+      }
       if (collection === "assets") row.querySelector(".inline-ownership-select").value = item.ownership || "owned";
 
       row.querySelector(".cancel-edit-button").addEventListener("click", () => {
@@ -1887,8 +2106,11 @@ function bindEditButtons(id, region) {
           return;
         }
 
-        item.name = newName;
+        item.name = creditCardBill
+          ? creditCardLiabilityName(financeData.creditCard?.setting, creditCardBill.statementMonth)
+          : newName;
         item.amount = newAmount;
+        if (creditCardBill) creditCardBill.amount = newAmount;
         if (collection === "assets") item.ownership = row.querySelector(".inline-ownership-select").value;
         saveRegions();
         renderAll();
@@ -1902,6 +2124,10 @@ function bindEditButtons(id, region) {
       });
 
       row.querySelector(".delete-edit-button").addEventListener("click", () => {
+        if (creditCardBill) {
+          alert("信用卡待付款负债不能直接删除。请在信用卡账单区块完成付款。");
+          return;
+        }
         if (!confirm(`确定删除「${item.name}」吗？`)) {
           return;
         }
@@ -1958,6 +2184,104 @@ function setupNoteForm(id, context = "") {
   });
 }
 
+function taiwanPaymentAssets() {
+  return regions.taiwan.assets.filter((asset) => (asset.ownership || "owned") === "owned");
+}
+
+function renderCreditCard() {
+  const cardSection = document.getElementById("taiwan-credit-card");
+  if (!creditCardSchemaReady) {
+    cardSection.innerHTML = `<h3>信用卡账单</h3><p>请先在 Supabase SQL Editor 执行 <code>supabase-credit-card-setup.sql</code>，再重新整理网页。</p>`;
+    return;
+  }
+
+  if (normaliseCreditCardData()) {
+    saveRegions();
+    showToast("已自动合并重复的信用卡负债。请同步资料以完成线上清理。");
+    renderAll();
+    return;
+  }
+
+  const card = financeData.creditCard || defaultCreditCardData();
+  const assets = taiwanPaymentAssets();
+  if (!card.setting || creditCardSettingsEditing) {
+    const setting = card.setting || { cardName: "信用卡", statementDay: 3, recordDay: 14, paymentDay: 18, paymentAssetId: "" };
+    cardSection.innerHTML = `<h3>信用卡账单</h3>
+      <p>管理每月 3 日结账、14 日登记账单、18 日付款。信用卡消费不会重复加入损益表。</p>
+      <div class="credit-card-form">
+        <input id="credit-card-name" type="text" placeholder="信用卡名称，例如：玉山信用卡" value="${escapeHtml(setting.cardName)}">
+        <select id="credit-card-payment-asset" aria-label="信用卡默认付款账户">
+          <option value="">请选择台湾付款资产账户</option>
+          ${assets.map((asset) => `<option value="${escapeHtml(asset.id)}"${asset.id === setting.paymentAssetId ? " selected" : ""}>${escapeHtml(asset.institution ? `${asset.institution} ${asset.name}` : asset.name)}</option>`).join("")}
+        </select>
+        <input id="credit-card-statement-day" type="number" min="1" max="28" value="${Number(setting.statementDay || 3)}" placeholder="结账日" aria-label="信用卡结账日">
+        <input id="credit-card-record-day" type="number" min="1" max="28" value="${Number(setting.recordDay || 14)}" placeholder="登记日" aria-label="信用卡登记日">
+        <input id="credit-card-payment-day" type="number" min="1" max="28" value="${Number(setting.paymentDay || 18)}" placeholder="付款日" aria-label="信用卡付款日">
+        <button type="button" id="credit-card-save-settings">${card.setting ? "储存设定" : "开始设定"}</button>
+      </div>`;
+    document.getElementById("credit-card-save-settings").addEventListener("click", () => {
+      const cardName = document.getElementById("credit-card-name").value.trim();
+      const paymentAssetId = document.getElementById("credit-card-payment-asset").value;
+      const statementDay = Number(document.getElementById("credit-card-statement-day").value);
+      const recordDay = Number(document.getElementById("credit-card-record-day").value);
+      const paymentDay = Number(document.getElementById("credit-card-payment-day").value);
+      if (!cardName || !paymentAssetId || ![statementDay, recordDay, paymentDay].every((day) => Number.isInteger(day) && day >= 1 && day <= 28)) {
+        return alert("请填写信用卡名称、付款资产账户，以及 1 至 28 日之间的日期。");
+      }
+      financeData.creditCard = { ...card, setting: { cardName, country: "taiwan", statementDay, recordDay, paymentDay, paymentAssetId } };
+      creditCardSettingsEditing = false;
+      saveRegions();
+      renderAll();
+    });
+    return;
+  }
+
+  const paymentAsset = assets.find((asset) => asset.id === card.setting.paymentAssetId);
+  const currentBill = card.bills.find((bill) => bill.statementMonth === selectedMonth);
+  const openBills = card.bills.filter((bill) => bill.status === "open").sort((first, second) => first.statementMonth.localeCompare(second.statementMonth));
+  cardSection.innerHTML = `<div class="credit-card-heading"><div><h3>信用卡账单</h3><p>${escapeHtml(card.setting.cardName)} · 每月 ${card.setting.statementDay} 日结账／${card.setting.recordDay} 日登记／${card.setting.paymentDay} 日付款</p></div><button type="button" id="credit-card-change-settings">设定</button></div>
+    <p class="credit-card-payment-account">默认付款账户：${paymentAsset ? escapeHtml(paymentAsset.institution ? `${paymentAsset.institution} ${paymentAsset.name}` : paymentAsset.name) : "未找到付款账户"}</p>
+    ${currentBill ? `<div class="credit-card-bill"><span>${escapeHtml(selectedMonth)} 已结账账单</span><strong>${money("NT$", currentBill.amount)}</strong><b class="${currentBill.status === "paid" ? "credit-card-paid" : "credit-card-open"}">${currentBill.status === "paid" ? "已付款" : "待付款"}</b>${currentBill.status === "open" ? `<button type="button" class="credit-card-pay" data-credit-card-bill-id="${currentBill.id}">标记已付款</button>` : ""}</div>` : `<div class="credit-card-form"><input id="credit-card-bill-amount" type="number" min="0" step="0.01" placeholder="输入 ${selectedMonth} 已结账账单总额（NT$）"><button type="button" id="credit-card-register-bill">登记已结账账单</button></div>`}
+    ${openBills.filter((bill) => bill.statementMonth !== selectedMonth).length ? `<div class="credit-card-open-list"><span>其他待付款账单</span>${openBills.filter((bill) => bill.statementMonth !== selectedMonth).map((bill) => `<p>${escapeHtml(bill.statementMonth)} · ${money("NT$", bill.amount)}</p>`).join("")}</div>` : ""}`;
+
+  document.getElementById("credit-card-change-settings").addEventListener("click", () => {
+    creditCardSettingsEditing = true;
+    renderAll();
+  });
+  document.getElementById("credit-card-register-bill")?.addEventListener("click", () => {
+    const amount = Number(document.getElementById("credit-card-bill-amount").value);
+    if (!Number.isFinite(amount) || amount <= 0) return alert("请输入大于 0 的已结账账单金额。");
+    if (card.bills.some((bill) => bill.statementMonth === selectedMonth)) return alert("这个月份已经登记过信用卡账单。");
+    const liabilityRecordId = globalThis.crypto.randomUUID();
+    regions.taiwan.liabilities.push({ id: liabilityRecordId, name: `${card.setting.cardName} 待付款（${selectedMonth}）`, amount });
+    card.bills.push({
+      id: globalThis.crypto.randomUUID(), country: "taiwan", statementMonth: selectedMonth, amount, status: "open",
+      liabilityRecordId, paymentAssetId: card.setting.paymentAssetId, paidAt: null,
+    });
+    saveRegions();
+    renderAll();
+    showToast("已登记信用卡账单；未新增损益表支出。");
+  });
+  cardSection.querySelectorAll(".credit-card-pay").forEach((button) => {
+    button.addEventListener("click", () => {
+      const bill = card.bills.find((item) => item.id === button.dataset.creditCardBillId);
+      if (!bill || bill.status !== "open") return;
+      const asset = regions.taiwan.assets.find((item) => item.id === bill.paymentAssetId);
+      const liabilityIndex = regions.taiwan.liabilities.findIndex((item) => item.id === bill.liabilityRecordId);
+      if (!asset || liabilityIndex < 0) return alert("找不到对应付款资产或信用卡负债，请先检查本月资产资料。");
+      if (Number(asset.amount) < Number(bill.amount)) return alert("默认付款账户余额不足，请先更新资产金额或更换付款账户。");
+      if (!confirm(`确定从「${asset.institution ? `${asset.institution} ${asset.name}` : asset.name}」扣除 ${money("NT$", bill.amount)} 并完成付款吗？`)) return;
+      asset.amount = Number(asset.amount) - Number(bill.amount);
+      regions.taiwan.liabilities.splice(liabilityIndex, 1);
+      bill.status = "paid";
+      bill.paidAt = new Date().toISOString();
+      saveRegions();
+      renderAll();
+      showToast("信用卡账单已付款，未重复计入损益表。");
+    });
+  });
+}
+
 function renderAll() {
   regions = getCurrentRegions();
   renderMonthPicker();
@@ -1970,6 +2294,7 @@ function renderAll() {
   bindTrendRegionButtons();
   renderRegion("malaysia", regions.malaysia);
   renderRegion("taiwan", regions.taiwan);
+  renderCreditCard();
   document.getElementById("malaysia-note").value = regions.malaysia.note || "";
   document.getElementById("taiwan-note").value = regions.taiwan.note || "";
   document.getElementById("malaysia-income-note").value = regions.malaysia.note || "";

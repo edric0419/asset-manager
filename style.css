@@ -1709,6 +1709,72 @@ body[data-active-tab="assets"] .country-section:has(#taiwan-summary) {
   font-size: 30px;
 }
 
+.credit-card-section {
+  margin-top: 18px;
+  padding: 18px;
+  border: 1px solid #dbe3eb;
+  border-radius: 12px;
+  background: #f8fafc;
+}
+
+.credit-card-section h3,
+.credit-card-section p {
+  margin-top: 0;
+}
+
+.credit-card-heading,
+.credit-card-bill {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.credit-card-heading p,
+.credit-card-payment-account,
+.credit-card-open-list {
+  color: #64748b;
+}
+
+.credit-card-heading button,
+.credit-card-form button,
+.credit-card-pay {
+  padding: 9px 12px;
+  border: 0;
+  border-radius: 7px;
+  background: #5b9f3b;
+  color: white;
+  font: inherit;
+  cursor: pointer;
+}
+
+.credit-card-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+.credit-card-form input,
+.credit-card-form select {
+  min-width: 0;
+  padding: 9px 10px;
+  border: 1px solid #cbd5e1;
+  border-radius: 7px;
+  font: inherit;
+}
+
+.credit-card-bill {
+  margin-top: 14px;
+  padding: 13px;
+  border-radius: 8px;
+  background: white;
+}
+
+.credit-card-open { color: #dc2626; }
+.credit-card-paid { color: #4b8c2a; }
+.credit-card-open-list { margin-top: 14px; }
+.credit-card-open-list p { margin: 5px 0 0; }
+
 .liability-modal[hidden] {
   display: none;
 }
@@ -2380,6 +2446,18 @@ body[data-active-tab="assets"] .country-section:has(#taiwan-summary) {
   }
 }
 
+@media (max-width: 640px) {
+  .credit-card-heading,
+  .credit-card-bill {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .credit-card-form {
+    grid-template-columns: 1fr;
+  }
+}
+
 @media (max-width: 480px) {
   .dashboard-metrics {
     grid-template-columns: 1fr;
@@ -2653,6 +2731,25 @@ body.dark-mode .income-region-summary {
 
 body.dark-mode .liability-region-summary {
   background: #151d21;
+}
+
+body.dark-mode .credit-card-section,
+body.dark-mode .credit-card-bill {
+  background: #151d21;
+  border-color: #2d3a40;
+}
+
+body.dark-mode .credit-card-heading p,
+body.dark-mode .credit-card-payment-account,
+body.dark-mode .credit-card-open-list {
+  color: #9eabb5;
+}
+
+body.dark-mode .credit-card-form input,
+body.dark-mode .credit-card-form select {
+  background: #101719;
+  border-color: #3a4950;
+  color: #f1f5f9;
 }
 
 body.dark-mode .liability-card-heading p,
