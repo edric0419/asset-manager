@@ -186,7 +186,9 @@ function setupAmountCalculator() {
   }, true);
   document.addEventListener("pointerdown", (event) => {
     if (!activeAmountCalculatorInput || calculator.contains(event.target) || event.target === activeAmountCalculatorInput) return;
-    closeAmountCalculator(true);
+    const savingUnbilled = activeAmountCalculatorInput.id === "credit-card-unbilled-amount" &&
+      event.target.closest("#credit-card-save-unbilled");
+    closeAmountCalculator(!savingUnbilled);
   });
   calculator.addEventListener("click", (event) => {
     const button = event.target.closest("button");
@@ -211,6 +213,14 @@ let cloudSyncBaseline = null;
 let localChangeVersion = 0;
 let creditCardSchemaReady = true;
 let creditCardSettingsEditing = false;
+let unbilledSchemaReady = true;
+const primaryCreditCardId = "primary";
+const taipeiMonthFormatter = new Intl.DateTimeFormat("en-CA", {
+  timeZone: "Asia/Taipei", year: "numeric", month: "2-digit",
+});
+const taipeiUpdateFormatter = new Intl.DateTimeFormat("zh-TW", {
+  timeZone: "Asia/Taipei", dateStyle: "medium", timeStyle: "short",
+});
 
 function queueCloudSync() {
   if (pendingSignOut || !currentUser || !localStorage.getItem(`personal-finance-cloud-imported-${currentUser.id}`)) return;
@@ -277,7 +287,22 @@ function getCloudRecords(userId, data = financeData) {
 }
 
 function defaultCreditCardData() {
-  return { setting: null, bills: [] };
+  return { setting: null, bills: [], unbilled: {} };
+}
+
+function getTaipeiMonth(now = new Date()) {
+  const parts = taipeiMonthFormatter.formatToParts(now);
+  return parts.find((part) => part.type === "year").value + "-" +
+    parts.find((part) => part.type === "month").value;
+}
+
+function unbilledLiabilities(id, month, data = financeData) {
+  if (id !== "taiwan" || month !== getTaipeiMonth()) return 0;
+  return Object.values(data.creditCard?.unbilled || {}).reduce((sum, entry) => sum + entry.amount, 0);
+}
+
+function totalLiabilitiesFor(id, month, region) {
+  return total(region.liabilities) + unbilledLiabilities(id, month);
 }
 
 function creditCardLiabilityName(setting, statementMonth) {
@@ -431,12 +456,13 @@ function isInvalidCreditCardMonthRule(error) {
 }
 
 async function fetchCloudData(userId) {
-  const [recordsResult, settingsResult, goalsResult, cardSettingResult, cardBillsResult] = await Promise.all([
+  const [recordsResult, settingsResult, goalsResult, cardSettingResult, cardBillsResult, unbilledResult] = await Promise.all([
     supabaseClient.from("finance_records").select("*").eq("user_id", userId),
     supabaseClient.from("monthly_settings").select("*").eq("user_id", userId),
     supabaseClient.from("savings_goals").select("*").eq("user_id", userId),
     supabaseClient.from("credit_card_settings").select("*").eq("user_id", userId).maybeSingle(),
     supabaseClient.from("credit_card_bills").select("*").eq("user_id", userId),
+    supabaseClient.from("credit_card_unbilled").select("card_id,amount,updated_at").eq("user_id", userId),
   ]);
   const error = recordsResult.error || settingsResult.error || goalsResult.error;
   if (error) throw error;
@@ -448,20 +474,27 @@ async function fetchCloudData(userId) {
   creditCardSchemaReady = !cardError;
   const cardSetting = cardError ? null : cardSettingResult.data;
   const cardBills = cardError ? [] : cardBillsResult.data || [];
+  if (unbilledResult.error && !isMissingCreditCardSchema(unbilledResult.error)) throw unbilledResult.error;
+  unbilledSchemaReady = !unbilledResult.error;
+  const unbilledRows = unbilledResult.data || [];
+  const data = createCloudData(records, settings, goals, cardSetting, cardBills);
+  data.creditCard.unbilled = Object.fromEntries(unbilledRows.map((row) => [
+    row.card_id, { amount: Number(row.amount), updatedAt: new Date(row.updated_at).toISOString() },
+  ]));
   return {
-    data: createCloudData(records, settings, goals, cardSetting, cardBills),
-    isEmpty: !records.length && !settings.length && !goals.length && !cardSetting && !cardBills.length,
+    data,
+    isEmpty: !records.length && !settings.length && !goals.length && !cardSetting && !cardBills.length && !unbilledRows.length,
   };
 }
 
 function applyCloudData(data) {
   const months = structuredClone(data.months);
+  financeData.creditCard = structuredClone(data.creditCard || defaultCreditCardData());
   const availableMonths = Object.keys(months).sort();
   if (!availableMonths.length) {
     const emptyData = createInitialFinanceData();
     financeData.months = emptyData.months;
     financeData.savingsGoals = emptyData.savingsGoals;
-    financeData.creditCard = emptyData.creditCard;
     selectedMonth = emptyData.selectedMonth;
     financeData.selectedMonth = selectedMonth;
     regions = financeData.months[selectedMonth];
@@ -469,7 +502,6 @@ function applyCloudData(data) {
   } else {
     financeData.months = months;
     financeData.savingsGoals = { ...defaultSavingsGoals, ...data.savingsGoals };
-    financeData.creditCard = structuredClone(data.creditCard || defaultCreditCardData());
     if (!financeData.months[selectedMonth]) selectedMonth = availableMonths.at(-1);
     financeData.selectedMonth = selectedMonth;
     regions = financeData.months[selectedMonth];
@@ -532,6 +564,13 @@ function cloudEntities(data) {
     });
   });
   const creditCard = data.creditCard || defaultCreditCardData();
+  for (const [cardId, balance] of Object.entries(creditCard.unbilled || {})) {
+    const key = "credit-card-unbilled:" + cardId;
+    entities.set(key, {
+      key, type: "creditCardUnbilled", cardId,
+      value: { amount: balance.amount, updatedAt: balance.updatedAt },
+    });
+  }
   if (creditCard.setting) {
     entities.set("credit-card-setting", {
       key: "credit-card-setting", type: "creditCardSetting",
@@ -587,6 +626,13 @@ function applySyncEntity(data, template, value) {
     region.note = String(next.note || "");
     return;
   }
+  if (template.type === "creditCardUnbilled") {
+    data.creditCard ??= defaultCreditCardData();
+    data.creditCard.unbilled ??= {};
+    if (value === null) delete data.creditCard.unbilled[template.cardId];
+    else data.creditCard.unbilled[template.cardId] = structuredClone(value);
+    return;
+  }
   if (template.type === "creditCardSetting") {
     data.creditCard = data.creditCard || defaultCreditCardData();
     data.creditCard.setting = value ? structuredClone(value) : null;
@@ -610,6 +656,8 @@ function syncEntityLabel(entity) {
     const labels = { assets: "资产", income: "收入", expenses: "开销", personalExpenses: "个人开销", liabilities: "负债" };
     return `${country} ${entity.monthKey} ${labels[entity.collection]}：${entity.value?.name || "已删除项目"}`;
   }
+  if (entity.type === "creditCardUnbilled") return "台湾信用卡未结账金额" +
+    (entity.cardId === primaryCreditCardId ? "" : "（" + entity.cardId + "）");
   if (entity.type === "creditCardSetting") return "台湾信用卡设定";
   if (entity.type === "creditCardBill") return `台湾信用卡账单：${entity.value?.statementMonth || ""}`;
   return entity.type === "goal" ? `${country} 储蓄目标` : `${country} ${entity.monthKey} 月度备注／代管金额`;
@@ -643,7 +691,11 @@ function mergeCloudData(localData, remoteData) {
 
 function resolveCloudConflicts(merged, conflicts) {
   conflicts.forEach((conflict, index) => {
-    const useLocal = confirm(`发现同步冲突（${index + 1}／${conflicts.length}）：\n${syncEntityLabel(conflict.template)}\n\n确定：保留这台装置的版本\n取消：保留线上版本`);
+    const describeBalance = (value) => value ? money("NT$", value.amount) : "尚未填写";
+    const balances = conflict.template.type === "creditCardUnbilled"
+      ? `\n这台装置：${describeBalance(conflict.localValue)}\n线上：${describeBalance(conflict.remoteValue)}`
+      : "";
+    const useLocal = confirm(`发现同步冲突（${index + 1}／${conflicts.length}）：\n${syncEntityLabel(conflict.template)}${balances}\n\n确定：保留这台装置的版本\n取消：保留线上版本`);
     applySyncEntity(merged, conflict.template, useLocal ? conflict.localValue : conflict.remoteValue);
   });
 }
@@ -664,7 +716,32 @@ function getSavingsGoals(userId, data) {
   }));
 }
 
+async function writeUnbilledBalances(userId, balances, remoteBalances) {
+  if (!unbilledSchemaReady && Object.keys(balances).length) {
+    throw new Error("请先在 Supabase 执行 supabase-credit-card-unbilled.sql，再同步未结账金额。");
+  }
+  const cardIds = new Set([...Object.keys(balances), ...Object.keys(remoteBalances)]);
+  const concurrentChange = "线上未结账金额刚被其他装置更新，请再同步一次以选择要保留的版本。";
+  for (const cardId of cardIds) {
+    const remote = remoteBalances[cardId];
+    const next = balances[cardId];
+    if (sameSyncValue(next, remote)) continue;
+    const table = supabaseClient.from("credit_card_unbilled");
+    if (!remote) {
+      const { error } = await table.insert({ user_id: userId, card_id: cardId, amount: next.amount, updated_at: next.updatedAt });
+      if (error) throw error.code === "23505" ? new Error(concurrentChange) : error;
+      continue;
+    }
+    const write = next ? table.update({ amount: next.amount, updated_at: next.updatedAt }) : table.delete();
+    const { data, error } = await write.eq("user_id", userId).eq("card_id", cardId)
+      .eq("amount", remote.amount).eq("updated_at", remote.updatedAt).select("card_id");
+    if (error) throw error;
+    if (!data.length) throw new Error(concurrentChange);
+  }
+}
+
 async function writeCloudData(userId, data, remoteData) {
+  await writeUnbilledBalances(userId, data.creditCard?.unbilled || {}, remoteData.creditCard?.unbilled || {});
   normaliseCreditCardData(data);
   // Write the card bill first. If the database migration is missing or invalid,
   // do not save the matching liability on its own and create an orphan.
@@ -886,9 +963,22 @@ function setupCloudImport() {
     try {
       const remote = await fetchCloudData(userId);
       const local = cloneCloudData(financeData);
-      let merged = local;
+      let merged = cloneCloudData(local);
       let conflicts = [];
       if (!isFirstCloudImport) ({ merged, conflicts } = mergeCloudData(local, remote.data));
+      else {
+        // First import may run on a device that has not seen a balance another
+        // device already saved. Preserve that balance unless explicitly chosen.
+        const remoteBalances = remote.data.creditCard.unbilled;
+        const localBalances = local.creditCard.unbilled;
+        merged.creditCard.unbilled = { ...remoteBalances, ...localBalances };
+        for (const [cardId, localValue] of Object.entries(localBalances)) {
+          const remoteValue = remoteBalances[cardId];
+          if (remoteValue && !sameSyncValue(localValue, remoteValue)) {
+            conflicts.push({ template: { type: "creditCardUnbilled", cardId }, localValue, remoteValue });
+          }
+        }
+      }
       if (conflicts.length) resolveCloudConflicts(merged, conflicts);
       const savedCount = await writeCloudData(userId, merged, remote.data);
       const latest = await fetchCloudData(userId);
@@ -896,6 +986,9 @@ function setupCloudImport() {
       if (localChangeVersion === syncStartChangeVersion) {
         applyCloudData(latest.data);
       } else {
+        if (sameSyncValue(financeData.creditCard.unbilled || {}, local.creditCard.unbilled)) {
+          financeData.creditCard.unbilled = latest.data.creditCard.unbilled;
+        }
         scheduleFollowUpSync = true;
         saveRegions(false);
       }
@@ -1434,6 +1527,13 @@ function isBackupData(data) {
   if (data.savingsGoals && (!Number.isFinite(Number(data.savingsGoals.taiwan || 0)) || !Number.isFinite(Number(data.savingsGoals.malaysia || 0)))) {
     return "储蓄目标金额格式错误。";
   }
+  const unbilled = data.creditCard?.unbilled;
+  if (unbilled !== undefined && (!unbilled || typeof unbilled !== "object" || Array.isArray(unbilled) ||
+    Object.entries(unbilled).some(([cardId, entry]) => !/^[a-z0-9-]{1,64}$/.test(cardId) ||
+      !Number.isFinite(entry?.amount) || entry.amount < 0 || typeof entry.updatedAt !== "string" ||
+      !Number.isFinite(Date.parse(entry.updatedAt)) || new Date(entry.updatedAt).toISOString() !== entry.updatedAt))) {
+    return "信用卡未结账金额格式错误。";
+  }
   return "";
 }
 
@@ -1456,7 +1556,9 @@ function restoreBackup(file) {
       const availableMonths = Object.keys(backup.months);
       financeData.months = backup.months;
       financeData.savingsGoals = { ...defaultSavingsGoals, ...(backup.savingsGoals || {}) };
+      const existingUnbilled = financeData.creditCard.unbilled || {};
       financeData.creditCard = structuredClone(backup.creditCard || defaultCreditCardData());
+      financeData.creditCard.unbilled = backup.creditCard?.unbilled ?? existingUnbilled;
       selectedMonth = backup.selectedMonth && backup.months[backup.selectedMonth]
         ? backup.selectedMonth
         : availableMonths[0];
@@ -1667,7 +1769,7 @@ function renderDashboard() {
     .map((id) => {
       const region = regions[id];
       const totalAssets = totalOwnedAssets(region);
-      const totalLiabilities = total(region.liabilities);
+      const totalLiabilities = totalLiabilitiesFor(id, selectedMonth, region);
       const netAssets = totalAssets - totalLiabilities;
       const regionTitle = id === "taiwan" ? "Taiwan（TWD）" : "Malaysia（MYR）";
       return `
@@ -1733,7 +1835,7 @@ function renderSavingsGoals() {
     <div class="savings-goals-regions">${regionsOrder.map((id) => {
       const region = regions[id];
       const goal = Number(financeData.savingsGoals[id]) || 0;
-      const current = totalSavingsGoalAssets(id, region) - total(region.liabilities);
+      const current = totalSavingsGoalAssets(id, region) - totalLiabilitiesFor(id, selectedMonth, region);
       const progress = goal > 0 ? Math.min(100, Math.max(0, (current / goal) * 100)) : 0;
       const remaining = goal - current;
       return `<article class="savings-goal-region">
@@ -1974,7 +2076,7 @@ function renderNetAssetTrend() {
   const trendGrid = document.getElementById("net-asset-trend-grid");
   const values = months.map((month) => {
     const region = financeData.months[month][selectedTrendRegion];
-    return totalOwnedAssets(region) - total(region.liabilities);
+    return totalOwnedAssets(region) - totalLiabilitiesFor(selectedTrendRegion, month, region);
   });
   trendGrid.innerHTML = renderSingleTrendCard(months, "净资产趋势", [{ name: "净资产", values, className: "net-asset-series" }]);
   bindChartTooltips(trendGrid);
@@ -1984,7 +2086,7 @@ function renderAssetLiabilityTrend() {
   const months = Object.keys(financeData.months).sort();
   const trendGrid = document.getElementById("asset-liability-trend-grid");
   const assetValues = months.map((month) => totalOwnedAssets(financeData.months[month][selectedTrendRegion]));
-  const liabilityValues = months.map((month) => total(financeData.months[month][selectedTrendRegion].liabilities));
+  const liabilityValues = months.map((month) => totalLiabilitiesFor(selectedTrendRegion, month, financeData.months[month][selectedTrendRegion]));
   const series = [
     { name: "总资产", values: assetValues, className: "asset-series" },
     { name: "总负债", values: liabilityValues, className: "liability-series" },
@@ -1998,7 +2100,7 @@ function renderRegion(id, region) {
   const totalExpenses = total(region.expenses);
   const totalPersonalExpenses = total(region.personalExpenses);
   const totalAssets = totalOwnedAssets(region);
-  const totalLiabilities = total(region.liabilities);
+  const totalLiabilities = totalLiabilitiesFor(id, selectedMonth, region);
   const netAssets = totalAssets - totalLiabilities;
   const previousRegion = financeData.months[getPreviousMonthKey()]?.[id];
 
@@ -2096,6 +2198,7 @@ function renderRegion(id, region) {
     <p>该地区总负债</p>
     <strong>${money(region.currency, totalLiabilities)}</strong>
     <span>共 ${region.liabilities.length} 笔负债</span>
+    ${unbilledLiabilities(id, selectedMonth) > 0 ? `<span>另含信用卡未结账 ${money(region.currency, unbilledLiabilities(id, selectedMonth))}</span>` : ""}
   `;
 
   document.getElementById(`${id}-summary`).innerHTML = `
@@ -2375,6 +2478,45 @@ function taiwanPaymentAssets() {
   return regions.taiwan.assets.filter((asset) => (asset.ownership || "owned") === "owned");
 }
 
+function renderUnbilledBalance(card) {
+  const section = document.getElementById("credit-card-unbilled");
+  if (selectedMonth !== getTaipeiMonth()) {
+    section.textContent = "未结账金额仅显示在当前月份（台湾时间）。";
+    return;
+  }
+  const balance = card.unbilled?.[primaryCreditCardId];
+  section.innerHTML = `<h4>未结账金额</h4>
+    <p><strong>${balance ? money("NT$", balance.amount) : "尚未填写"}</strong>
+    ${balance ? `<time class="credit-card-unbilled-hint" datetime="${escapeHtml(balance.updatedAt)}"> · 更新于 ${taipeiUpdateFormatter.format(new Date(balance.updatedAt))}（台湾时间）</time>` : ""}</p>`;
+  if (currentUser && !unbilledSchemaReady) {
+    section.insertAdjacentHTML("beforeend", "<p>请在 Supabase 执行 supabase-credit-card-unbilled.sql 后同步，启用线上储存。</p>");
+    return;
+  }
+  section.insertAdjacentHTML("beforeend", `
+    <form class="credit-card-form">
+      <input id="credit-card-unbilled-amount" type="text" inputmode="decimal" data-amount-input
+        aria-label="未结账总额（NT$）" placeholder="输入未结账总额（NT$）" required>
+      <button type="submit" id="credit-card-save-unbilled">储存未结账金额</button>
+    </form>
+    <p class="credit-card-unbilled-hint">填写银行 App 的未结账总额。用计算机输入算式时，先按「＝」套用。</p>`);
+  const form = section.querySelector("form");
+  const input = form.querySelector("input");
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const value = input.value.trim();
+    const amount = Number(value);
+    if (!/^(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i.test(value) || !Number.isFinite(amount) || amount < 0) {
+      alert("请输入大于或等于 0 的金额，或先套用计算结果。");
+      return;
+    }
+    card.unbilled ??= {};
+    card.unbilled[primaryCreditCardId] = { amount, updatedAt: new Date().toISOString() };
+    saveRegions();
+    renderAll();
+    showToast("已储存未结账总额。");
+  });
+}
+
 function renderCreditCard() {
   const cardSection = document.getElementById("taiwan-credit-card");
   if (!creditCardSchemaReady) {
@@ -2428,9 +2570,12 @@ function renderCreditCard() {
   const openBills = card.bills.filter((bill) => bill.status === "open").sort((first, second) => first.statementMonth.localeCompare(second.statementMonth));
   cardSection.innerHTML = `<div class="credit-card-heading"><div><h3>信用卡账单</h3><p>${escapeHtml(card.setting.cardName)} · 每月 ${card.setting.statementDay} 日结账／${card.setting.recordDay} 日登记／${card.setting.paymentDay} 日付款</p></div><button type="button" id="credit-card-change-settings">设定</button></div>
     <p class="credit-card-payment-account">默认付款账户：${paymentAsset ? escapeHtml(paymentAsset.institution ? `${paymentAsset.institution} ${paymentAsset.name}` : paymentAsset.name) : "未找到付款账户"}</p>
+    <section class="credit-card-unbilled" id="credit-card-unbilled"></section>
+    ${!currentBill ? `<p class="credit-card-unbilled-hint">登记前请核对银行 App，确认未结账总额已排除刚结账的消费。</p>` : ""}
     ${currentBill ? `<div class="credit-card-bill"><span>${escapeHtml(selectedMonth)} 已结账账单</span><strong>${money("NT$", currentBill.amount)}</strong><b class="${currentBill.status === "paid" ? "credit-card-paid" : "credit-card-open"}">${currentBill.status === "paid" ? "已付款" : "待付款"}</b>${currentBill.status === "open" ? `<button type="button" class="credit-card-pay" data-credit-card-bill-id="${currentBill.id}">标记已付款</button>` : ""}</div>` : `<div class="credit-card-form"><input id="credit-card-bill-amount" type="text" inputmode="decimal" data-amount-input placeholder="输入 ${selectedMonth} 已结账账单总额（NT$）"><button type="button" id="credit-card-register-bill">登记已结账账单</button></div>`}
     ${openBills.filter((bill) => bill.statementMonth !== selectedMonth).length ? `<div class="credit-card-open-list"><span>其他待付款账单</span>${openBills.filter((bill) => bill.statementMonth !== selectedMonth).map((bill) => `<p>${escapeHtml(bill.statementMonth)} · ${money("NT$", bill.amount)}</p>`).join("")}</div>` : ""}`;
 
+  renderUnbilledBalance(card);
   document.getElementById("credit-card-change-settings").addEventListener("click", () => {
     creditCardSettingsEditing = true;
     renderAll();
@@ -2587,6 +2732,15 @@ document.getElementById("theme-toggle").addEventListener("click", () => {
 
 setupAmountCalculator();
 renderAll();
+let lastTaipeiMonth = getTaipeiMonth();
+function refreshAfterTaipeiMonthChange() {
+  const currentMonth = getTaipeiMonth();
+  if (currentMonth === lastTaipeiMonth) return;
+  lastTaipeiMonth = currentMonth;
+  renderAll();
+}
+document.addEventListener("visibilitychange", refreshAfterTaipeiMonthChange);
+setInterval(refreshAfterTaipeiMonthChange, 60_000);
 setActiveTab(loadActiveTab());
 setTheme(loadTheme());
 setupAssetForm("malaysia", regions.malaysia);

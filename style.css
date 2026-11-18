@@ -1775,6 +1775,30 @@ body[data-active-tab="assets"] .country-section:has(#taiwan-summary) {
 .credit-card-open-list { margin-top: 14px; }
 .credit-card-open-list p { margin: 5px 0 0; }
 
+.credit-card-unbilled {
+  margin: 14px 0;
+  padding: 14px 0;
+  border-block: 1px solid #dbe3eb;
+}
+
+.credit-card-unbilled h4 {
+  margin: 0 0 8px;
+}
+
+.credit-card-unbilled-hint {
+  margin: 8px 0;
+  color: #64748b;
+  font-size: 0.875rem;
+}
+
+body.dark-mode .credit-card-unbilled {
+  border-color: #2d3a40;
+}
+
+body.dark-mode .credit-card-unbilled-hint {
+  color: #9eabb5;
+}
+
 .liability-modal[hidden] {
   display: none;
 }
